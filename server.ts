@@ -187,6 +187,23 @@ function buildFallbackConceptSvgDataUrl(prompt: string, sceneIndex = 0): string 
   return `data:image/svg+xml;base64,${Buffer.from(svg, 'utf-8').toString('base64')}`;
 }
 
+function extractRasterBase64(
+  imageInput?: string,
+  mimeHint?: string
+): { data: string; mimeType: string } | null {
+  if (!imageInput || typeof imageInput !== 'string') return null;
+  if (imageInput.startsWith('data:image/svg')) return null;
+  if (imageInput.startsWith('data:')) {
+    const [header, b64] = imageInput.split(',');
+    if (!b64) return null;
+    const match = header.match(/^data:([^;]+);base64$/i);
+    const mimeType = match ? match[1] : mimeHint || 'image/jpeg';
+    if (mimeType.includes('svg')) return null;
+    return { data: b64, mimeType };
+  }
+  return { data: imageInput, mimeType: mimeHint || 'image/jpeg' };
+}
+
 async function generateSceneImageOrFallback(
   ai: GoogleGenAI | null,
   scenePrompt: string,
@@ -194,15 +211,16 @@ async function generateSceneImageOrFallback(
   refBase64?: string,
   refMime?: string
 ): Promise<string> {
+  const rasterRef = extractRasterBase64(refBase64, refMime);
   if (ai) {
     try {
-      const contents: any = refBase64
+      const contents: any = rasterRef
         ? {
             parts: [
               {
                 inlineData: {
-                  data: refBase64,
-                  mimeType: refMime || 'image/jpeg',
+                  data: rasterRef.data,
+                  mimeType: rasterRef.mimeType,
                 },
               },
               { text: `Cinematic video frame for scene ${sceneIdx + 1}: ${scenePrompt}` },
@@ -455,6 +473,116 @@ async function startServer() {
     return res.json({
       success: true,
       imageDataUrl,
+    });
+  });
+
+  // 3b. Multimodal Scene Rewrite & AI Regeneration Endpoint (Analyze Scene Photo + Text/Voice Instruction)
+  app.post('/api/ai/rewrite-scene', async (req, res) => {
+    const {
+      currentDescription = '',
+      instruction = '',
+      imageBase64,
+      imageMimeType,
+      sceneIndex = 0,
+      scene3dPreset = 'coupe',
+      regenerateVisual = false,
+    } = req.body || {};
+
+    const ai = getAiClient();
+    const rasterPhoto = extractRasterBase64(imageBase64, imageMimeType);
+    const cleanInstruction = String(instruction || '').trim();
+    const cleanCurrent = String(currentDescription || '').trim();
+
+    let rewrittenDescription = '';
+    let rewrittenOverlayText = '';
+    let suggestedPreset = PRESET_CYCLE.includes(scene3dPreset) ? scene3dPreset : 'coupe';
+
+    if (ai) {
+      try {
+        const promptText = `Eres el Director Creativo de Reelify Studio.
+Reescribe y mejora en español la Escena #${Number(sceneIndex) + 1} de un video multi-escena.
+- Descripción actual de la escena: "${cleanCurrent || 'Escena cinematográfica en estudio 3D'}"
+- Instrucción del usuario (por texto o voz): "${cleanInstruction || 'Analiza la foto adjunta y reescribe la escena con dirección de cámara cinematográfica, iluminación profesional y subtítulo atractivo.'}"
+- Escenario 3D actual: "${suggestedPreset}"
+${rasterPhoto ? '- Se ha adjuntado una fotografía de referencia para esta escena: describe e integra fielmente los elementos visuales, colores, sujeto y atmósfera de la foto en la nueva dirección de escena.' : ''}
+Devuelve un JSON con:
+1. "description": Descripción visual detallada y dirección de cámara para la escena (máx 240 caracteres, en español).
+2. "overlayText": Texto corto o subtítulo impactante en pantalla para modo sin voz (máx 110 caracteres, en español).
+3. "scene3dPreset": El mejor escenario 3D entre "coupe", "sculpture", "drone", "station", "protein".`;
+
+        const contents: any = rasterPhoto
+          ? {
+              parts: [
+                {
+                  inlineData: {
+                    data: rasterPhoto.data,
+                    mimeType: rasterPhoto.mimeType,
+                  },
+                },
+                { text: promptText },
+              ],
+            }
+          : promptText;
+
+        const response = await ai.models.generateContent({
+          model: 'gemini-3.8-flash',
+          contents,
+          config: {
+            responseMimeType: 'application/json',
+            responseSchema: {
+              type: Type.OBJECT,
+              properties: {
+                description: { type: Type.STRING },
+                overlayText: { type: Type.STRING },
+                scene3dPreset: { type: Type.STRING },
+              },
+              required: ['description', 'overlayText'],
+            },
+          },
+        });
+
+        const raw = response.text?.trim() || '';
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          if (parsed.description) rewrittenDescription = String(parsed.description).trim();
+          if (parsed.overlayText) rewrittenOverlayText = String(parsed.overlayText).trim();
+          if (parsed.scene3dPreset && PRESET_CYCLE.includes(parsed.scene3dPreset)) {
+            suggestedPreset = parsed.scene3dPreset;
+          }
+        }
+      } catch (err: any) {
+        console.warn('Gemini rewrite-scene fallback triggered:', err?.message || err);
+      }
+    }
+
+    if (!rewrittenDescription) {
+      const baseFocus = cleanInstruction
+        ? cleanInstruction
+        : cleanCurrent || `Secuencia visual en escenario 3D ${suggestedPreset.toUpperCase()}`;
+      const photoBadge = rasterPhoto ? ' [Basado en Foto de Escena]' : '';
+      rewrittenDescription = `Escena 0${Number(sceneIndex) + 1}${photoBadge}: ${baseFocus} — Toma cinematográfica con travelling suave, iluminación volumétrica de estudio y enfoque dinámico en escenario 3D (${suggestedPreset.toUpperCase()}).`;
+      rewrittenOverlayText = cleanInstruction
+        ? `${cleanInstruction.slice(0, 95)}`
+        : `ESCENA 0${Number(sceneIndex) + 1} · ${baseFocus.slice(0, 80)}`;
+    }
+
+    let regeneratedImageDataUrl: string | undefined;
+    if (regenerateVisual) {
+      regeneratedImageDataUrl = await generateSceneImageOrFallback(
+        ai,
+        rewrittenDescription,
+        Number(sceneIndex) || 0,
+        imageBase64,
+        imageMimeType
+      );
+    }
+
+    return res.json({
+      success: true,
+      description: rewrittenDescription,
+      overlayText: rewrittenOverlayText || rewrittenDescription,
+      scene3dPreset: suggestedPreset,
+      ...(regeneratedImageDataUrl ? { imageDataUrl: regeneratedImageDataUrl } : {}),
     });
   });
 

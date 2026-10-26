@@ -122,8 +122,10 @@ export interface Scene {
   description: string;
   duration: string;
   imageUrl?: string;
+  images?: string[];
   scene3dPreset?: SubjectPresetId;
   overlayText?: string;
+  aiInstruction?: string;
 }
 
 export type VideoFilterId = 'none' | 'grayscale' | 'sepia' | 'high-contrast' | 'vintage';
@@ -1643,6 +1645,13 @@ const VideoPlayerModal = ({
   const [isTextApplied, setIsTextApplied] = useState(false);
   const [isSavedConfirm, setIsSavedConfirm] = useState(false);
   const [isConfirmingDelete, setIsConfirmingDelete] = useState(false);
+  const [isModalDictating, setIsModalDictating] = useState(false);
+  const [regeneratingModalSceneIdx, setRegeneratingModalSceneIdx] = useState<number | null>(null);
+  const [localScenesState, setLocalScenesState] = useState<Scene[]>(() =>
+    video.scenes && video.scenes.length > 0
+      ? video.scenes
+      : [{ description: video.prompt, duration: video.duration || '5s' }]
+  );
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const videoElRef = useRef<HTMLVideoElement | null>(null);
 
@@ -1651,26 +1660,27 @@ const VideoPlayerModal = ({
     if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
       window.speechSynthesis.cancel();
     }
-  }, [video.id]);
+    setLocalScenesState(
+      video.scenes && video.scenes.length > 0
+        ? video.scenes
+        : [{ description: video.prompt, duration: video.duration || '5s' }]
+    );
+  }, [video.id, video.scenes, video.prompt, video.duration]);
 
   const activeFilterPreset = useMemo(() => getVideoFilterPreset(selectedFilter), [selectedFilter]);
 
-  const scenes =
-    video.scenes && video.scenes.length > 0
-      ? video.scenes
-      : [{ description: video.prompt, duration: video.duration || '5s' }];
+  const scenes = localScenesState;
 
   const currentImages = useMemo(() => getVideoImageUrls(video), [video]);
   const totalSec = useMemo(() => getTotalScenesDurationSeconds(scenes, video.duration), [scenes, video.duration]);
 
   const previewVideoWithCustomText = useMemo<VideoProject>(() => {
     const cleanTxt = modalOverlayText.trim();
-    if (!cleanTxt) return video;
     return {
       ...video,
-      customTextOverlay: cleanTxt,
+      ...(cleanTxt ? { customTextOverlay: cleanTxt } : {}),
       scenes: scenes.map((sc, idx) =>
-        idx === activeSceneIdx ? { ...sc, overlayText: cleanTxt } : sc
+        idx === activeSceneIdx && cleanTxt ? { ...sc, overlayText: cleanTxt } : sc
       ),
     };
   }, [video, modalOverlayText, scenes, activeSceneIdx]);
@@ -1678,22 +1688,164 @@ const VideoPlayerModal = ({
   const handleApplyModalText = async () => {
     const cleanTxt = modalOverlayText.trim() || video.title;
     setModalOverlayText(cleanTxt);
+    const updatedScenes = scenes.map((sc, i) =>
+      i === activeSceneIdx
+        ? { ...sc, overlayText: cleanTxt, description: cleanTxt }
+        : { ...sc, overlayText: sc.overlayText || sc.description }
+    );
+    setLocalScenesState(updatedScenes);
     if (onSaveAsNewProject) {
       const updatedVid: VideoProject = {
         ...video,
         filter: selectedFilter,
         customTextOverlay: cleanTxt,
         script: cleanTxt,
-        scenes: scenes.map((sc, i) =>
-          i === activeSceneIdx
-            ? { ...sc, overlayText: cleanTxt, description: cleanTxt }
-            : { ...sc, overlayText: sc.overlayText || sc.description }
-        ),
+        scenes: updatedScenes,
       };
       await onSaveAsNewProject(updatedVid);
     }
     setIsTextApplied(true);
     setTimeout(() => setIsTextApplied(false), 2200);
+  };
+
+  const handleModalVoiceDictateScene = (sceneIdx: number) => {
+    setActiveSceneIdx(sceneIdx);
+    const SpeechRec = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SpeechRec) {
+      const sampleVoice = `Escena 0${sceneIdx + 1} reescrita por voz: Toma cinematográfica en estudio 3D con iluminación dinámica`;
+      setModalOverlayText(sampleVoice);
+      setLocalScenesState((prev) =>
+        prev.map((sc, i) => (i === sceneIdx ? { ...sc, description: sampleVoice, overlayText: sampleVoice } : sc))
+      );
+      return;
+    }
+    try {
+      const recognition = new SpeechRec();
+      recognition.lang = 'es-ES';
+      recognition.interimResults = false;
+      recognition.maxAlternatives = 1;
+      setIsModalDictating(true);
+      recognition.onresult = async (event: any) => {
+        const transcript = event.results?.[0]?.[0]?.transcript || '';
+        if (transcript) {
+          setModalOverlayText(transcript);
+          const nextScenes = scenes.map((sc, i) =>
+            i === sceneIdx ? { ...sc, description: transcript, overlayText: transcript } : sc
+          );
+          setLocalScenesState(nextScenes);
+          if (onSaveAsNewProject) {
+            await onSaveAsNewProject({
+              ...video,
+              filter: selectedFilter,
+              customTextOverlay: transcript,
+              scenes: nextScenes,
+            });
+          }
+        }
+        setIsModalDictating(false);
+      };
+      recognition.onerror = () => setIsModalDictating(false);
+      recognition.onend = () => setIsModalDictating(false);
+      recognition.start();
+    } catch {
+      setIsModalDictating(false);
+    }
+  };
+
+  const handleModalScenePhotoUpload = async (sceneIdx: number, e: React.ChangeEvent<HTMLInputElement>) => {
+    const files: File[] = e.target.files ? Array.from(e.target.files) : [];
+    if (files.length === 0) return;
+    setIsUpdatingImgs(true);
+    try {
+      const compressed: string[] = [];
+      for (const file of files.slice(0, 6)) {
+        const dataUrl = await compressImageFile(file, 640, 0.78);
+        compressed.push(dataUrl);
+      }
+      const primaryPhoto = compressed[0];
+      const nextScenes = scenes.map((sc, i) =>
+        i === sceneIdx
+          ? {
+              ...sc,
+              imageUrl: primaryPhoto,
+              images: Array.from(new Set([...compressed, ...(sc.images || []), ...(sc.imageUrl ? [sc.imageUrl] : [])])).slice(0, 8),
+            }
+          : sc
+      );
+      setLocalScenesState(nextScenes);
+      setActiveSceneIdx(sceneIdx);
+      if (onSaveAsNewProject) {
+        const allImgs = nextScenes.map((s) => s.imageUrl).filter((u): u is string => Boolean(u));
+        await onSaveAsNewProject({
+          ...video,
+          filter: selectedFilter,
+          images: allImgs.length > 0 ? allImgs : video.images,
+          referenceImage: allImgs[0] || video.referenceImage,
+          scenes: nextScenes,
+        });
+      }
+    } finally {
+      setIsUpdatingImgs(false);
+      e.target.value = '';
+    }
+  };
+
+  const handleModalRegenerateSceneWithAI = async (sceneIdx: number, regenerateVisual = true) => {
+    const targetScene = scenes[sceneIdx];
+    if (!targetScene) return;
+    setActiveSceneIdx(sceneIdx);
+    setRegeneratingModalSceneIdx(sceneIdx);
+    try {
+      const sceneImg =
+        targetScene.imageUrl || (currentImages.length > 0 ? currentImages[sceneIdx % currentImages.length] : undefined);
+      const res = await fetch('/api/ai/rewrite-scene', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          currentDescription: targetScene.description,
+          instruction: activeSceneIdx === sceneIdx ? modalOverlayText : targetScene.aiInstruction || '',
+          imageBase64: sceneImg,
+          sceneIndex: sceneIdx,
+          scene3dPreset: targetScene.scene3dPreset || video.scene3dPreset || 'coupe',
+          regenerateVisual,
+        }),
+      });
+      const data = await res.json();
+      const newDesc = data.description || targetScene.description;
+      const newOverlay = data.overlayText || newDesc;
+      const newImg = data.imageDataUrl || targetScene.imageUrl || sceneImg;
+      setModalOverlayText(newOverlay);
+
+      const nextScenes = scenes.map((sc, i) =>
+        i === sceneIdx
+          ? {
+              ...sc,
+              description: newDesc,
+              overlayText: newOverlay,
+              scene3dPreset: data.scene3dPreset || sc.scene3dPreset,
+              imageUrl: newImg,
+              images: newImg
+                ? Array.from(new Set([newImg, ...(sc.images || [])])).slice(0, 8)
+                : sc.images,
+            }
+          : sc
+      );
+      setLocalScenesState(nextScenes);
+
+      if (onSaveAsNewProject) {
+        const allImgs = nextScenes.map((s) => s.imageUrl).filter((u): u is string => Boolean(u));
+        await onSaveAsNewProject({
+          ...video,
+          filter: selectedFilter,
+          customTextOverlay: newOverlay,
+          images: allImgs.length > 0 ? allImgs : video.images,
+          referenceImage: allImgs[0] || video.referenceImage,
+          scenes: nextScenes,
+        });
+      }
+    } finally {
+      setRegeneratingModalSceneIdx(null);
+    }
   };
 
   const handleUploadNewImages = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -1958,27 +2110,54 @@ const VideoPlayerModal = ({
           </div>
         </div>
 
-        {/* Crear Texto en Pantalla Bar (Silent Scenario Text Overlay) */}
+        {/* Crear / Reescribir Texto o Voz en Pantalla + Regenerar con IA */}
         <div className="px-6 py-2.5 bg-indigo-950 border-b border-indigo-800 flex flex-wrap items-center justify-between gap-2">
           <div className="flex items-center gap-2 text-xs font-semibold text-indigo-200">
             <VolumeX className="w-4 h-4 text-emerald-400 shrink-0" />
-            <span>Escenario Sin Voz · Crear Texto en Pantalla:</span>
+            <span>Escena 0{activeSceneIdx + 1} · Reescribir por Texto, Voz o IA:</span>
           </div>
-          <div className="flex-1 min-w-[240px] flex items-center gap-2">
+          <div className="flex-1 min-w-[240px] flex flex-wrap items-center gap-2">
             <input
               type="text"
               value={modalOverlayText}
               onChange={(e) => setModalOverlayText(e.target.value)}
-              placeholder="Escribe el texto o subtítulo para esta escena..."
-              className="flex-1 bg-slate-900 border border-indigo-700 rounded-lg px-3 py-1.5 text-xs text-white outline-none focus:border-indigo-400"
+              placeholder="Escribe o dicta por voz para reescribir esta escena..."
+              className="flex-1 min-w-[180px] bg-slate-900 border border-indigo-700 rounded-lg px-3 py-1.5 text-xs text-white outline-none focus:border-indigo-400"
             />
+            <button
+              type="button"
+              onClick={() => handleModalVoiceDictateScene(activeSceneIdx)}
+              className={`px-2.5 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1 whitespace-nowrap shrink-0 transition-colors ${
+                isModalDictating
+                  ? 'bg-rose-600 text-white'
+                  : 'bg-slate-800 hover:bg-slate-700 text-indigo-200 border border-indigo-700'
+              }`}
+              title="Dictar con tu voz para reescribir la escena seleccionada"
+            >
+              <Mic className="w-3.5 h-3.5" />
+              <span>{isModalDictating ? 'Escuchando...' : 'Voz'}</span>
+            </button>
             <button
               type="button"
               onClick={handleApplyModalText}
               className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold flex items-center gap-1.5 whitespace-nowrap shrink-0"
             >
               {isTextApplied ? <Check className="w-3.5 h-3.5" /> : <TypeIcon className="w-3.5 h-3.5" />}
-              <span>{isTextApplied ? '¡Texto Guardado!' : 'Crear Texto'}</span>
+              <span>{isTextApplied ? '¡Guardado!' : 'Guardar Texto'}</span>
+            </button>
+            <button
+              type="button"
+              disabled={regeneratingModalSceneIdx !== null}
+              onClick={() => handleModalRegenerateSceneWithAI(activeSceneIdx, true)}
+              className="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white text-xs font-bold flex items-center gap-1.5 whitespace-nowrap shrink-0"
+              title="Analizar foto de la escena y regenerar texto + imagen con IA"
+            >
+              {regeneratingModalSceneIdx === activeSceneIdx ? (
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              ) : (
+                <Sparkles className="w-3.5 h-3.5" />
+              )}
+              <span>Regenerar con IA</span>
             </button>
           </div>
         </div>
@@ -2032,7 +2211,7 @@ const VideoPlayerModal = ({
             )}
           </div>
 
-          <div className="lg:col-span-2 p-6 space-y-5 max-h-[440px] overflow-y-auto bg-slate-50 border-t lg:border-t-0 lg:border-l border-slate-200">
+          <div className="lg:col-span-2 p-6 space-y-5 max-h-[460px] overflow-y-auto bg-slate-50 border-t lg:border-t-0 lg:border-l border-slate-200">
             <div>
               <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1.5 flex items-center justify-between">
                 <span>Texto del Escenario (Sin Voz)</span>
@@ -2050,35 +2229,89 @@ const VideoPlayerModal = ({
               <div className="space-y-2.5">
                 {scenes.map((sc, i) => {
                   const sceneImg = sc.imageUrl || (currentImages.length > 0 ? currentImages[i % currentImages.length] : null);
+                  const isSceneRegenerating = regeneratingModalSceneIdx === i;
                   return (
                     <div
                       key={i}
-                      className={`p-3 rounded-lg border text-xs transition-colors flex gap-3 ${
+                      onClick={() => {
+                        setActiveSceneIdx(i);
+                        setModalOverlayText(sc.overlayText || sc.description || video.prompt);
+                      }}
+                      className={`p-3 rounded-xl border text-xs transition-colors cursor-pointer space-y-2 ${
                         activeSceneIdx === i
-                          ? 'bg-indigo-50/70 border-indigo-300 text-slate-900'
-                          : 'bg-white border-slate-200 text-slate-600'
+                          ? 'bg-indigo-50/80 border-indigo-300 text-slate-900'
+                          : 'bg-white border-slate-200 text-slate-600 hover:border-slate-300'
                       }`}
                     >
-                      {sceneImg && (
-                        <img
-                          src={sceneImg}
-                          alt={`Scene ${i + 1}`}
-                          className={`w-20 h-14 object-cover rounded border border-slate-200 shrink-0 bg-slate-900 transition-all duration-200 ${activeFilterPreset.tailwindClass}`}
-                        />
-                      )}
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center justify-between font-medium text-slate-900 mb-1">
-                          <span className="flex items-center gap-1.5">
-                            <span>Escena 0{i + 1}</span>
-                            {sc.scene3dPreset && (
-                              <span className="px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-700 text-[10px] font-mono uppercase">
-                                3D: {sc.scene3dPreset}
-                              </span>
-                            )}
-                          </span>
-                          <span className="font-mono tabular-nums text-indigo-600">{sc.duration}</span>
+                      <div className="flex gap-3">
+                        {sceneImg && (
+                          <img
+                            src={sceneImg}
+                            alt={`Scene ${i + 1}`}
+                            className={`w-20 h-14 object-cover rounded border border-slate-200 shrink-0 bg-slate-900 transition-all duration-200 ${activeFilterPreset.tailwindClass}`}
+                          />
+                        )}
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center justify-between font-medium text-slate-900 mb-1">
+                            <span className="flex items-center gap-1.5">
+                              <span>Escena 0{i + 1}</span>
+                              {sc.scene3dPreset && (
+                                <span className="px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-700 text-[10px] font-mono uppercase">
+                                  3D: {sc.scene3dPreset}
+                                </span>
+                              )}
+                            </span>
+                            <span className="font-mono tabular-nums text-indigo-600">{sc.duration}</span>
+                          </div>
+                          <p className="leading-relaxed line-clamp-2">{sc.description}</p>
                         </div>
-                        <p className="leading-relaxed line-clamp-2">{sc.description}</p>
+                      </div>
+
+                      {/* Per-Scene Quick Actions: Agregar Foto · Dictar por Voz · Regenerar con IA */}
+                      <div
+                        className="flex flex-wrap items-center gap-1.5 pt-1 border-t border-slate-200/70"
+                        onClick={(ev) => ev.stopPropagation()}
+                      >
+                        <label className="cursor-pointer px-2 py-1 rounded bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 text-[10px] font-semibold flex items-center gap-1">
+                          <Upload className="w-3 h-3" />
+                          <span>+ Foto</span>
+                          <input
+                            type="file"
+                            accept="image/*"
+                            multiple
+                            onChange={(e) => handleModalScenePhotoUpload(i, e)}
+                            className="hidden"
+                          />
+                        </label>
+                        <button
+                          type="button"
+                          onClick={() => handleModalVoiceDictateScene(i)}
+                          className="px-2 py-1 rounded bg-slate-100 hover:bg-slate-200 text-slate-700 text-[10px] font-semibold flex items-center gap-1"
+                          title="Reescribir esta escena por voz"
+                        >
+                          <Mic className="w-3 h-3 text-indigo-600" />
+                          <span>Voz</span>
+                        </button>
+                        <button
+                          type="button"
+                          disabled={isSceneRegenerating}
+                          onClick={() => handleModalRegenerateSceneWithAI(i, false)}
+                          className="px-2 py-1 rounded bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 text-[10px] font-semibold flex items-center gap-1 disabled:opacity-50"
+                          title="Reescribir descripción de la escena usando la foto y la IA"
+                        >
+                          {isSceneRegenerating ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />}
+                          <span>Reescribir IA</span>
+                        </button>
+                        <button
+                          type="button"
+                          disabled={isSceneRegenerating}
+                          onClick={() => handleModalRegenerateSceneWithAI(i, true)}
+                          className="px-2 py-1 rounded bg-indigo-600 hover:bg-indigo-700 text-white text-[10px] font-semibold flex items-center gap-1 disabled:opacity-50"
+                          title="Regenerar escena e imagen completa con ayuda de la IA"
+                        >
+                          {isSceneRegenerating ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />}
+                          <span>Regenerar IA</span>
+                        </button>
                       </div>
                     </div>
                   );
@@ -3350,6 +3583,11 @@ export default function App() {
   const [generationStepText, setGenerationStepText] = useState('');
   const [saveBannerMessage, setSaveBannerMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [dictatingSceneState, setDictatingSceneState] = useState<{
+    sceneIdx: number;
+    field: 'description' | 'instruction';
+  } | null>(null);
+  const [rewritingSceneIdx, setRewritingSceneIdx] = useState<number | null>(null);
 
   // Live Voice Director state (gemini-3.8-live via /live WebSocket)
   const [isVoiceActive, setIsVoiceActive] = useState(false);
@@ -4410,37 +4648,190 @@ export default function App() {
     }
   };
 
-  // Upload an image for a single specific scene row in the Multi-Scene Editor
+  // Upload one or multiple photos for a specific scene row in the Multi-Scene Editor
   const handleSceneRowImageUpload = async (sceneIdx: number, e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    const dataUrl = await compressImageFile(file, 640, 0.78);
-    setDraftScenes((prev) =>
-      prev.map((sc, idx) => (idx === sceneIdx ? { ...sc, imageUrl: dataUrl } : sc))
-    );
+    const files: File[] = e.target.files ? Array.from(e.target.files) : [];
+    if (files.length === 0) return;
+    setIsCompressingImages(true);
+    setError(null);
+    try {
+      const compressedPhotos: string[] = [];
+      for (const file of files.slice(0, 6)) {
+        const dataUrl = await compressImageFile(file, 640, 0.78);
+        compressedPhotos.push(dataUrl);
+      }
+      if (compressedPhotos.length > 0) {
+        const primaryPhoto = compressedPhotos[0];
+        setDraftScenes((prev) =>
+          prev.map((sc, idx) => {
+            if (idx !== sceneIdx) return sc;
+            const existingPhotos = sc.images && sc.images.length > 0 ? sc.images : sc.imageUrl ? [sc.imageUrl] : [];
+            const mergedPhotos = Array.from(new Set([...compressedPhotos, ...existingPhotos])).slice(0, 8);
+            return {
+              ...sc,
+              imageUrl: primaryPhoto,
+              images: mergedPhotos,
+            };
+          })
+        );
+        setSaveBannerMessage(
+          `${compressedPhotos.length} foto(s) agregada(s) a la Escena 0${sceneIdx + 1}. Ahora puedes reescribirla por texto, voz o regenerarla con IA.`
+        );
+        setTimeout(() => setSaveBannerMessage(null), 4000);
+      }
+    } catch (err: any) {
+      setError(err.message || 'No se pudo cargar la foto en la escena.');
+    } finally {
+      setIsCompressingImages(false);
+      e.target.value = '';
+    }
   };
 
-  // Generate an AI image for a single specific scene row
+  // Voice dictation for a specific scene (either directly into scene description or into AI instruction)
+  const handleSceneVoiceDictation = (sceneIdx: number, field: 'description' | 'instruction') => {
+    const SpeechRec = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SpeechRec) {
+      const fallbackVoiceText =
+        field === 'instruction'
+          ? 'Analiza la foto de esta escena, agrega iluminación cinematográfica neón y movimiento de cámara orbital'
+          : `Escena 0${sceneIdx + 1} dictada por voz: Toma dinámica basada en la foto de referencia con enfoque de estudio 3D.`;
+      setDraftScenes((prev) =>
+        prev.map((sc, idx) => {
+          if (idx !== sceneIdx) return sc;
+          return field === 'instruction'
+            ? { ...sc, aiInstruction: fallbackVoiceText }
+            : { ...sc, description: fallbackVoiceText, overlayText: fallbackVoiceText };
+        })
+      );
+      setSaveBannerMessage(`Dictado por voz aplicado en la Escena 0${sceneIdx + 1}.`);
+      setTimeout(() => setSaveBannerMessage(null), 3500);
+      return;
+    }
+
+    try {
+      const recognition = new SpeechRec();
+      recognition.lang = 'es-ES';
+      recognition.interimResults = false;
+      recognition.maxAlternatives = 1;
+      setDictatingSceneState({ sceneIdx, field });
+      recognition.onresult = (event: any) => {
+        const transcript = event.results?.[0]?.[0]?.transcript || '';
+        if (transcript) {
+          setDraftScenes((prev) =>
+            prev.map((sc, idx) => {
+              if (idx !== sceneIdx) return sc;
+              if (field === 'instruction') {
+                const nextInst = sc.aiInstruction ? `${sc.aiInstruction} ${transcript}` : transcript;
+                return { ...sc, aiInstruction: nextInst };
+              }
+              const nextDesc = sc.description ? `${sc.description} ${transcript}` : transcript;
+              return { ...sc, description: nextDesc, overlayText: nextDesc };
+            })
+          );
+          setSaveBannerMessage(`Voz transcrita en la Escena 0${sceneIdx + 1}: "${transcript}"`);
+          setTimeout(() => setSaveBannerMessage(null), 3500);
+        }
+        setDictatingSceneState(null);
+      };
+      recognition.onerror = () => setDictatingSceneState(null);
+      recognition.onend = () => setDictatingSceneState(null);
+      recognition.start();
+    } catch {
+      setDictatingSceneState(null);
+    }
+  };
+
+  // Rewrite or Regenerate a specific scene using its attached photo + text/voice instruction with Gemini AI
+  const handleRewriteOrRegenerateSceneWithAI = async (
+    sceneIdx: number,
+    options?: { regenerateVisual?: boolean; customInstruction?: string }
+  ) => {
+    const targetScene = draftScenes[sceneIdx];
+    if (!targetScene) return;
+    const regenerateVisual = Boolean(options?.regenerateVisual);
+    setRewritingSceneIdx(sceneIdx);
+    setError(null);
+    try {
+      const res = await fetch('/api/ai/rewrite-scene', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          currentDescription: targetScene.description,
+          instruction: options?.customInstruction ?? targetScene.aiInstruction ?? '',
+          imageBase64: targetScene.imageUrl,
+          sceneIndex: sceneIdx,
+          scene3dPreset: targetScene.scene3dPreset || selected3DPresetForCreate,
+          regenerateVisual,
+        }),
+      });
+      const data = await res.json();
+      setDraftScenes((prev) =>
+        prev.map((sc, idx) => {
+          if (idx !== sceneIdx) return sc;
+          const nextImg = data.imageDataUrl || sc.imageUrl;
+          const existingImgs = sc.images && sc.images.length > 0 ? sc.images : sc.imageUrl ? [sc.imageUrl] : [];
+          const mergedImgs = nextImg ? Array.from(new Set([nextImg, ...existingImgs])).slice(0, 8) : existingImgs;
+          return {
+            ...sc,
+            description: data.description || sc.description,
+            overlayText: data.overlayText || data.description || sc.overlayText,
+            scene3dPreset: (data.scene3dPreset as SubjectPresetId) || sc.scene3dPreset,
+            imageUrl: nextImg,
+            images: mergedImgs,
+          };
+        })
+      );
+      setSaveBannerMessage(
+        regenerateVisual
+          ? `¡Escena 0${sceneIdx + 1} reescrita y regenerada visualmente con ayuda de la IA!`
+          : `¡Escena 0${sceneIdx + 1} reescrita con IA a partir de tu foto e instrucciones!`
+      );
+      setTimeout(() => setSaveBannerMessage(null), 4000);
+    } catch (err: any) {
+      setError(err.message || 'No se pudo regenerar la escena con IA.');
+    } finally {
+      setRewritingSceneIdx(null);
+    }
+  };
+
+  // Generate an AI image for a single specific scene row (using attached photo as reference if available)
   const handleGenerateSingleSceneAiImage = async (sceneIdx: number) => {
     const targetScene = draftScenes[sceneIdx];
     if (!targetScene) return;
+    setRewritingSceneIdx(sceneIdx);
     setIsCompressingImages(true);
     try {
+      const effectivePrompt =
+        targetScene.aiInstruction?.trim()
+          ? `${targetScene.description} — ${targetScene.aiInstruction.trim()}`
+          : targetScene.description || prompt || `Escena ${sceneIdx + 1}`;
       const res = await fetch('/api/ai/image', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          prompt: targetScene.description || prompt || `Escena ${sceneIdx + 1}`,
+          prompt: effectivePrompt,
+          imageBase64: targetScene.imageUrl,
           sceneIndex: sceneIdx,
         }),
       });
       const data = await res.json();
       if (data.imageDataUrl) {
         setDraftScenes((prev) =>
-          prev.map((sc, idx) => (idx === sceneIdx ? { ...sc, imageUrl: data.imageDataUrl } : sc))
+          prev.map((sc, idx) => {
+            if (idx !== sceneIdx) return sc;
+            const existing = sc.images && sc.images.length > 0 ? sc.images : sc.imageUrl ? [sc.imageUrl] : [];
+            return {
+              ...sc,
+              imageUrl: data.imageDataUrl,
+              images: Array.from(new Set([data.imageDataUrl, ...existing])).slice(0, 8),
+            };
+          })
         );
+        setSaveBannerMessage(`Imagen de la Escena 0${sceneIdx + 1} regenerada con IA.`);
+        setTimeout(() => setSaveBannerMessage(null), 3500);
       }
     } finally {
+      setRewritingSceneIdx(null);
       setIsCompressingImages(false);
     }
   };
@@ -5959,137 +6350,331 @@ export default function App() {
                     </button>
                   </div>
 
-                  <div className="space-y-3">
-                    {draftScenes.map((sc, idx) => (
-                      <div
-                        key={idx}
-                        className="p-4 rounded-xl bg-slate-50 border border-slate-200 flex flex-col md:flex-row gap-4 items-start"
-                      >
-                        {/* Scene Thumbnail & Image Controls */}
-                        <div className="w-full md:w-44 shrink-0 space-y-2">
-                          <div className="aspect-video rounded-lg overflow-hidden bg-slate-900 border border-slate-300 relative">
-                            {sc.imageUrl ? (
-                              <img src={sc.imageUrl} alt={`Escena ${idx + 1}`} className="w-full h-full object-cover" />
-                            ) : (
-                              <div className="w-full h-full flex items-center justify-center text-xs text-slate-500">
-                                Sin imagen
-                              </div>
-                            )}
-                            <span className="absolute top-1.5 left-1.5 px-2 py-0.5 rounded bg-slate-950/80 text-white font-mono text-[10px] font-bold">
-                              ESCENA 0{idx + 1}
-                            </span>
-                          </div>
-                          <div className="flex items-center gap-1.5">
-                            <label className="flex-1 cursor-pointer py-1 px-2 rounded bg-white border border-slate-200 hover:bg-slate-100 text-[11px] font-medium text-slate-700 text-center">
-                              Subir Foto
-                              <input
-                                type="file"
-                                accept="image/*"
-                                onChange={(e) => handleSceneRowImageUpload(idx, e)}
-                                className="hidden"
-                              />
-                            </label>
-                            <button
-                              type="button"
-                              onClick={() => handleGenerateSingleSceneAiImage(idx)}
-                              className="py-1 px-2 rounded bg-indigo-50 border border-indigo-200 hover:bg-indigo-100 text-[11px] font-medium text-indigo-700"
-                              title="Generar imagen con IA para esta escena"
-                            >
-                              IA Img
-                            </button>
-                          </div>
-                        </div>
+                  <div className="space-y-4">
+                    {draftScenes.map((sc, idx) => {
+                      const scenePhotos =
+                        sc.images && sc.images.length > 0
+                          ? sc.images
+                          : sc.imageUrl
+                          ? [sc.imageUrl]
+                          : [];
+                      const isDictatingDesc =
+                        dictatingSceneState?.sceneIdx === idx && dictatingSceneState?.field === 'description';
+                      const isDictatingInst =
+                        dictatingSceneState?.sceneIdx === idx && dictatingSceneState?.field === 'instruction';
+                      const isRewritingThisScene = rewritingSceneIdx === idx;
 
-                        {/* Scene Description, Duration, and 3D Scenario Controls */}
-                        <div className="flex-1 w-full space-y-3">
-                          <div className="flex flex-wrap items-center justify-between gap-2">
-                            <div className="flex items-center gap-2">
-                              <span className="text-xs font-bold text-slate-800">Escenario 3D:</span>
-                              <select
-                                value={sc.scene3dPreset || 'coupe'}
-                                onChange={(e) => {
-                                  const val = e.target.value as SubjectPresetId;
-                                  setDraftScenes((prev) =>
-                                    prev.map((item, i) => (i === idx ? { ...item, scene3dPreset: val } : item))
-                                  );
-                                }}
-                                className="bg-white border border-slate-200 rounded-lg px-2.5 py-1 text-xs font-medium text-slate-800 focus:outline-none focus:border-indigo-500"
-                              >
-                                {STAGE_3D_PRESETS.map((sp) => (
-                                  <option key={sp.id} value={sp.id}>
-                                    {sp.name} ({sp.badge})
-                                  </option>
-                                ))}
-                              </select>
-                            </div>
-
-                            <div className="flex flex-wrap items-center gap-2.5 bg-white border border-slate-200 rounded-xl px-3 py-1.5 shadow-2xs">
-                              <div className="flex items-center gap-1.5">
-                                <Clock className="w-3.5 h-3.5 text-indigo-500 shrink-0" />
-                                <label
-                                  htmlFor={`scene-duration-slider-${idx}`}
-                                  className="text-xs font-medium text-slate-600 whitespace-nowrap"
-                                >
-                                  Duración:
-                                </label>
-                              </div>
-
-                              <div className="flex items-center gap-2">
-                                <span className="text-[10px] font-mono text-slate-400 tabular-nums">1s</span>
-                                <input
-                                  id={`scene-duration-slider-${idx}`}
-                                  type="range"
-                                  min={1}
-                                  max={20}
-                                  step={0.5}
-                                  value={parseDurationSeconds(sc.duration, 4)}
-                                  onChange={(e) => {
-                                    const numericVal = parseFloat(e.target.value);
-                                    const formatted = `${Number.isFinite(numericVal) ? numericVal : 4}s`;
-                                    setDraftScenes((prev) =>
-                                      prev.map((item, i) => (i === idx ? { ...item, duration: formatted } : item))
-                                    );
-                                  }}
-                                  aria-label={`Duración de la escena ${idx + 1}`}
-                                  className="w-28 sm:w-36 h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-indigo-600 focus:outline-none"
-                                />
-                                <span className="text-[10px] font-mono text-slate-400 tabular-nums">20s</span>
-                              </div>
-
-                              <span className="px-2 py-0.5 rounded-md bg-indigo-50 border border-indigo-200 text-xs font-mono font-bold text-indigo-700 tabular-nums min-w-[3.25rem] text-center">
-                                {parseDurationSeconds(sc.duration, 4)}s
+                      return (
+                        <div
+                          key={idx}
+                          className="p-4 rounded-xl bg-slate-50 border border-slate-200 flex flex-col md:flex-row gap-4 items-start"
+                        >
+                          {/* Scene Thumbnail, Multi-Photo Strip & Image Controls */}
+                          <div className="w-full md:w-52 shrink-0 space-y-2.5">
+                            <div className="aspect-video rounded-lg overflow-hidden bg-slate-900 border border-slate-300 relative">
+                              {sc.imageUrl ? (
+                                <img src={sc.imageUrl} alt={`Escena ${idx + 1}`} className="w-full h-full object-cover" />
+                              ) : (
+                                <div className="w-full h-full flex items-center justify-center text-xs text-slate-500">
+                                  Sin foto
+                                </div>
+                              )}
+                              <span className="absolute top-1.5 left-1.5 px-2 py-0.5 rounded bg-slate-950/85 text-white font-mono text-[10px] font-bold">
+                                ESCENA 0{idx + 1}
                               </span>
-
-                              {draftScenes.length > 1 && (
-                                <button
-                                  type="button"
-                                  onClick={() =>
-                                    setDraftScenes((prev) => prev.filter((_, itemIdx) => itemIdx !== idx))
-                                  }
-                                  className="p-1 text-slate-400 hover:text-rose-600 rounded-lg hover:bg-rose-50 transition-colors"
-                                  title="Eliminar escena"
-                                >
-                                  <Trash2 className="w-4 h-4" />
-                                </button>
+                              {scenePhotos.length > 0 && (
+                                <span className="absolute bottom-1.5 right-1.5 px-1.5 py-0.5 rounded bg-indigo-950/85 text-indigo-200 font-mono text-[10px]">
+                                  {scenePhotos.length} {scenePhotos.length === 1 ? 'foto' : 'fotos'}
+                                </span>
                               )}
                             </div>
+
+                            {/* Mini Photo Strip for this Scene (Select active photo or remove) */}
+                            {scenePhotos.length > 0 && (
+                              <div className="flex items-center gap-1.5 overflow-x-auto pb-1">
+                                {scenePhotos.map((photoUrl, pIdx) => {
+                                  const isSelectedPhoto = sc.imageUrl === photoUrl;
+                                  return (
+                                    <div key={pIdx} className="relative shrink-0 group">
+                                      <button
+                                        type="button"
+                                        onClick={() =>
+                                          setDraftScenes((prev) =>
+                                            prev.map((item, i) => (i === idx ? { ...item, imageUrl: photoUrl } : item))
+                                          )
+                                        }
+                                        className={`w-11 h-8 rounded overflow-hidden border-2 transition-all block ${
+                                          isSelectedPhoto
+                                            ? 'border-indigo-600 ring-1 ring-indigo-500'
+                                            : 'border-slate-300 opacity-75 hover:opacity-100'
+                                        }`}
+                                        title={`Usar foto #${pIdx + 1} en la Escena 0${idx + 1}`}
+                                      >
+                                        <img src={photoUrl} alt={`Foto ${pIdx + 1}`} className="w-full h-full object-cover" />
+                                      </button>
+                                      {scenePhotos.length > 1 && (
+                                        <button
+                                          type="button"
+                                          onClick={() =>
+                                            setDraftScenes((prev) =>
+                                              prev.map((item, i) => {
+                                                if (i !== idx) return item;
+                                                const remaining = scenePhotos.filter((_, rIdx) => rIdx !== pIdx);
+                                                return {
+                                                  ...item,
+                                                  images: remaining,
+                                                  imageUrl:
+                                                    item.imageUrl === photoUrl ? remaining[0] : item.imageUrl,
+                                                };
+                                              })
+                                            )
+                                          }
+                                          className="absolute -top-1 -right-1 w-3.5 h-3.5 rounded-full bg-rose-600 text-white flex items-center justify-center text-[9px] opacity-0 group-hover:opacity-100 transition-opacity"
+                                          title="Quitar esta foto de la escena"
+                                        >
+                                          ×
+                                        </button>
+                                      )}
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            )}
+
+                            <div className="grid grid-cols-2 gap-1.5">
+                              <label className="cursor-pointer py-1.5 px-2 rounded-lg bg-amber-500 hover:bg-amber-600 text-white text-[11px] font-bold text-center flex items-center justify-center gap-1 shadow-2xs transition-colors">
+                                <Upload className="w-3 h-3 shrink-0" />
+                                <span>+ Fotos</span>
+                                <input
+                                  type="file"
+                                  accept="image/*"
+                                  multiple
+                                  onChange={(e) => handleSceneRowImageUpload(idx, e)}
+                                  className="hidden"
+                                />
+                              </label>
+                              <button
+                                type="button"
+                                disabled={isRewritingThisScene}
+                                onClick={() => handleGenerateSingleSceneAiImage(idx)}
+                                className="py-1.5 px-2 rounded-lg bg-indigo-50 border border-indigo-200 hover:bg-indigo-100 text-[11px] font-bold text-indigo-700 flex items-center justify-center gap-1 disabled:opacity-50"
+                                title="Regenerar imagen de la escena con IA"
+                              >
+                                {isRewritingThisScene ? (
+                                  <Loader2 className="w-3 h-3 animate-spin" />
+                                ) : (
+                                  <Sparkles className="w-3 h-3" />
+                                )}
+                                <span>IA Foto</span>
+                              </button>
+                            </div>
                           </div>
 
-                          <textarea
-                            value={sc.description}
-                            onChange={(e) => {
-                              const val = e.target.value;
-                              setDraftScenes((prev) =>
-                                prev.map((item, i) => (i === idx ? { ...item, description: val } : item))
-                              );
-                            }}
-                            rows={2}
-                            placeholder="Descripción visual y dirección de cámara para esta escena..."
-                            className="w-full bg-white border border-slate-200 rounded-lg p-2.5 text-xs text-slate-800 focus:ring-2 focus:ring-indigo-500 outline-none resize-none"
-                          />
+                          {/* Scene Description, Voice/Text Rewrite, Duration Slider, and AI Regeneration Controls */}
+                          <div className="flex-1 w-full space-y-3">
+                            <div className="flex flex-wrap items-center justify-between gap-2">
+                              <div className="flex items-center gap-2">
+                                <span className="text-xs font-bold text-slate-800">Escenario 3D:</span>
+                                <select
+                                  value={sc.scene3dPreset || 'coupe'}
+                                  onChange={(e) => {
+                                    const val = e.target.value as SubjectPresetId;
+                                    setDraftScenes((prev) =>
+                                      prev.map((item, i) => (i === idx ? { ...item, scene3dPreset: val } : item))
+                                    );
+                                  }}
+                                  className="bg-white border border-slate-200 rounded-lg px-2.5 py-1 text-xs font-medium text-slate-800 focus:outline-none focus:border-indigo-500"
+                                >
+                                  {STAGE_3D_PRESETS.map((sp) => (
+                                    <option key={sp.id} value={sp.id}>
+                                      {sp.name} ({sp.badge})
+                                    </option>
+                                  ))}
+                                </select>
+                              </div>
+
+                              <div className="flex flex-wrap items-center gap-2.5 bg-white border border-slate-200 rounded-xl px-3 py-1.5 shadow-2xs">
+                                <div className="flex items-center gap-1.5">
+                                  <Clock className="w-3.5 h-3.5 text-indigo-500 shrink-0" />
+                                  <label
+                                    htmlFor={`scene-duration-slider-${idx}`}
+                                    className="text-xs font-medium text-slate-600 whitespace-nowrap"
+                                  >
+                                    Duración:
+                                  </label>
+                                </div>
+
+                                <div className="flex items-center gap-2">
+                                  <span className="text-[10px] font-mono text-slate-400 tabular-nums">1s</span>
+                                  <input
+                                    id={`scene-duration-slider-${idx}`}
+                                    type="range"
+                                    min={1}
+                                    max={20}
+                                    step={0.5}
+                                    value={parseDurationSeconds(sc.duration, 4)}
+                                    onChange={(e) => {
+                                      const numericVal = parseFloat(e.target.value);
+                                      const formatted = `${Number.isFinite(numericVal) ? numericVal : 4}s`;
+                                      setDraftScenes((prev) =>
+                                        prev.map((item, i) => (i === idx ? { ...item, duration: formatted } : item))
+                                      );
+                                    }}
+                                    aria-label={`Duración de la escena ${idx + 1}`}
+                                    className="w-28 sm:w-36 h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-indigo-600 focus:outline-none"
+                                  />
+                                  <span className="text-[10px] font-mono text-slate-400 tabular-nums">20s</span>
+                                </div>
+
+                                <span className="px-2 py-0.5 rounded-md bg-indigo-50 border border-indigo-200 text-xs font-mono font-bold text-indigo-700 tabular-nums min-w-[3.25rem] text-center">
+                                  {parseDurationSeconds(sc.duration, 4)}s
+                                </span>
+
+                                {draftScenes.length > 1 && (
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      setDraftScenes((prev) => prev.filter((_, itemIdx) => itemIdx !== idx))
+                                    }
+                                    className="p-1 text-slate-400 hover:text-rose-600 rounded-lg hover:bg-rose-50 transition-colors"
+                                    title="Eliminar escena"
+                                  >
+                                    <Trash2 className="w-4 h-4" />
+                                  </button>
+                                )}
+                              </div>
+                            </div>
+
+                            {/* Scene Text / Script Box + Voice Dictation & Quick Rewrite from Photo */}
+                            <div className="space-y-1.5">
+                              <div className="flex flex-wrap items-center justify-between gap-2">
+                                <span className="text-[11px] font-semibold text-slate-600">
+                                  Guion y Texto en Pantalla de la Escena (Editable por Texto o Voz):
+                                </span>
+                                <div className="flex flex-wrap items-center gap-1.5">
+                                  <button
+                                    type="button"
+                                    onClick={() => handleSceneVoiceDictation(idx, 'description')}
+                                    className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold flex items-center gap-1 transition-colors ${
+                                      isDictatingDesc
+                                        ? 'bg-rose-600 text-white'
+                                        : 'bg-white border border-slate-200 hover:bg-slate-100 text-slate-700'
+                                    }`}
+                                    title="Dictar con tu voz el texto de esta escena"
+                                  >
+                                    <Mic className="w-3 h-3 text-indigo-600" />
+                                    <span>{isDictatingDesc ? 'Escuchando Voz...' : 'Dictar por Voz'}</span>
+                                  </button>
+                                  <button
+                                    type="button"
+                                    disabled={isRewritingThisScene}
+                                    onClick={() =>
+                                      handleRewriteOrRegenerateSceneWithAI(idx, {
+                                        regenerateVisual: false,
+                                        customInstruction:
+                                          sc.aiInstruction ||
+                                          'Analiza la foto de la escena y reescribe el guion y subtítulo con estilo cinematográfico profesional',
+                                      })
+                                    }
+                                    className="px-2.5 py-1 rounded-lg bg-indigo-50 border border-indigo-200 hover:bg-indigo-100 text-[11px] font-semibold text-indigo-700 flex items-center gap-1 disabled:opacity-50"
+                                    title="Analizar la foto adjunta y reescribir el texto de la escena con IA"
+                                  >
+                                    {isRewritingThisScene ? (
+                                      <Loader2 className="w-3 h-3 animate-spin" />
+                                    ) : (
+                                      <Sparkles className="w-3 h-3" />
+                                    )}
+                                    <span>Reescribir desde Foto</span>
+                                  </button>
+                                </div>
+                              </div>
+
+                              <textarea
+                                value={sc.description}
+                                onChange={(e) => {
+                                  const val = e.target.value;
+                                  setDraftScenes((prev) =>
+                                    prev.map((item, i) =>
+                                      i === idx ? { ...item, description: val, overlayText: val } : item
+                                    )
+                                  );
+                                }}
+                                rows={2}
+                                placeholder="Escribe o dicta por voz la descripción visual y texto en pantalla para esta escena..."
+                                className="w-full bg-white border border-slate-200 rounded-lg p-2.5 text-xs text-slate-800 focus:ring-2 focus:ring-indigo-500 outline-none resize-none"
+                              />
+                            </div>
+
+                            {/* AI Rewrite / Regenerate Bar (Using Photo + Text or Voice Instruction) */}
+                            <div className="p-2.5 rounded-xl bg-indigo-50/70 border border-indigo-200/80 flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+                              <div className="relative flex-1">
+                                <input
+                                  type="text"
+                                  value={sc.aiInstruction || ''}
+                                  onChange={(e) => {
+                                    const val = e.target.value;
+                                    setDraftScenes((prev) =>
+                                      prev.map((item, i) => (i === idx ? { ...item, aiInstruction: val } : item))
+                                    );
+                                  }}
+                                  placeholder="Instrucción por texto o voz para la IA (ej. Usa la foto para crear una toma nocturna en neón)..."
+                                  className="w-full bg-white border border-indigo-200 rounded-lg py-1.5 pl-3 pr-16 text-xs text-slate-800 placeholder-slate-400 focus:outline-none focus:border-indigo-500"
+                                />
+                                <button
+                                  type="button"
+                                  onClick={() => handleSceneVoiceDictation(idx, 'instruction')}
+                                  className={`absolute right-1.5 top-1/2 -translate-y-1/2 px-2 py-0.5 rounded text-[10px] font-bold flex items-center gap-1 transition-colors ${
+                                    isDictatingInst
+                                      ? 'bg-rose-600 text-white'
+                                      : 'bg-slate-100 hover:bg-slate-200 text-slate-700'
+                                  }`}
+                                  title="Dictar instrucción para la IA con tu voz"
+                                >
+                                  <Mic className="w-3 h-3 text-indigo-600" />
+                                  <span>{isDictatingInst ? 'Voz...' : 'Voz'}</span>
+                                </button>
+                              </div>
+
+                              <div className="flex items-center gap-1.5 shrink-0">
+                                <button
+                                  type="button"
+                                  disabled={isRewritingThisScene}
+                                  onClick={() =>
+                                    handleRewriteOrRegenerateSceneWithAI(idx, { regenerateVisual: false })
+                                  }
+                                  className="px-3 py-1.5 rounded-lg bg-white border border-indigo-300 hover:bg-indigo-100 text-indigo-700 text-xs font-bold flex items-center gap-1 whitespace-nowrap disabled:opacity-50"
+                                  title="Reescribir el texto de la escena con ayuda de la IA usando la foto y tu instrucción"
+                                >
+                                  {isRewritingThisScene ? (
+                                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                  ) : (
+                                    <TypeIcon className="w-3.5 h-3.5" />
+                                  )}
+                                  <span>Reescribir IA</span>
+                                </button>
+
+                                <button
+                                  type="button"
+                                  disabled={isRewritingThisScene}
+                                  onClick={() =>
+                                    handleRewriteOrRegenerateSceneWithAI(idx, { regenerateVisual: true })
+                                  }
+                                  className="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold flex items-center gap-1 whitespace-nowrap shadow-2xs disabled:opacity-50"
+                                  title="Regenerar tanto el guion como la imagen de la escena con ayuda de la IA"
+                                >
+                                  {isRewritingThisScene ? (
+                                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                  ) : (
+                                    <Sparkles className="w-3.5 h-3.5" />
+                                  )}
+                                  <span>Regenerar con IA</span>
+                                </button>
+                              </div>
+                            </div>
+                          </div>
                         </div>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 </div>
 
