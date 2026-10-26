@@ -1,0 +1,52 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "User profile information.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "description": "Unique identifier for the user." },
+        "email": { "type": "string", "description": "User's email address." },
+        "displayName": { "type": "string", "description": "User's display name." },
+        "photoURL": { "type": "string", "description": "URL to the user's profile picture." },
+        "createdAt": { "type": "string", "format": "date-time", "description": "When the user account was created." }
+      },
+      "required": ["uid", "email"]
+    },
+    "Video": {
+      "title": "Video",
+      "description": "Metadata for an AI-generated video with optional reference and scene images.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Unique identifier for the video." },
+        "userId": { "type": "string", "description": "UID of the owner." },
+        "title": { "type": "string", "maxLength": 200, "description": "Title of the video project." },
+        "prompt": { "type": "string", "maxLength": 2000, "description": "The text prompt used to generate the video." },
+        "folder": { "type": "string", "maxLength": 100, "description": "Custom folder name for organizing the video." },
+        "script": { "type": "string", "maxLength": 10000, "description": "Generated narrative script." },
+        "scenes": { "type": "array", "description": "Storyboard scenes with optional imageUrl." },
+        "images": { "type": "array", "description": "Compressed data URLs of images used in the video." },
+        "referenceImage": { "type": "string", "description": "Primary starting frame or thumbnail image data URL." },
+        "scene3dPreset": { "type": "string", "description": "Linked 3D stage scene preset ID." },
+        "status": { "type": "string", "enum": ["pending", "completed", "failed"], "description": "Current status of the generation." },
+        "videoData": { "type": "string", "description": "Base64 encoded video data or URI." },
+        "mimeType": { "type": "string", "description": "MIME type of the video." },
+        "aspectRatio": { "type": "string", "description": "Aspect ratio of the video." },
+        "duration": { "type": "string", "description": "Duration of the video." },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Timestamp of creation." },
+        "interactionId": { "type": "string", "description": "Gemini Interaction ID for tracking." }
+      },
+      "required": ["userId", "prompt", "status", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "User profile document."
+    },
+    "/videos/{videoId}": {
+      "schema": "Video",
+      "description": "Generated video document."
+    }
+  }
+}

@@ -1,0 +1,6 @@
+{
+  "name": "Reelify Video AI",
+  "description": "Professional AI video generation and planning software.",
+  "requestFramePermissions": ["camera", "microphone"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

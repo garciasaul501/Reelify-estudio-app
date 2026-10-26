@@ -1,0 +1,82 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // 1. Global Safety Net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // --- Helpers ---
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    // --- Entity Validations ---
+
+    function isValidUser(data) {
+      return data.keys().hasAll(['uid', 'email'])
+        && data.keys().hasOnly(['uid', 'email', 'displayName', 'photoURL', 'createdAt'])
+        && data.uid == request.auth.uid
+        && data.email is string && data.email.size() <= 256;
+    }
+
+    function isValidVideo(data) {
+      return data.keys().hasAll(['userId', 'prompt', 'status', 'createdAt'])
+        && data.keys().hasOnly([
+          'id', 'userId', 'title', 'prompt', 'folder', 'script', 'scenes',
+          'images', 'referenceImage', 'scene3dPreset',
+          'status', 'videoData', 'mimeType', 'aspectRatio', 'duration',
+          'createdAt', 'interactionId'
+        ])
+        && data.userId == request.auth.uid
+        && data.prompt is string && data.prompt.size() <= 2000
+        && (!('title' in data) || (data.title is string && data.title.size() <= 200))
+        && (!('folder' in data) || (data.folder is string && data.folder.size() <= 100))
+        && (!('script' in data) || (data.script is string && data.script.size() <= 10000))
+        && (!('scenes' in data) || (data.scenes is list && data.scenes.size() <= 50))
+        && (!('images' in data) || (data.images is list && data.images.size() <= 20))
+        && (!('referenceImage' in data) || (data.referenceImage is string && data.referenceImage.size() <= 800000))
+        && (!('scene3dPreset' in data) || (data.scene3dPreset is string && data.scene3dPreset.size() <= 50))
+        && (!('videoData' in data) || (data.videoData is string && data.videoData.size() <= 900000))
+        && (!('mimeType' in data) || (data.mimeType is string && data.mimeType.size() <= 100))
+        && (!('aspectRatio' in data) || (data.aspectRatio is string && data.aspectRatio.size() <= 20))
+        && (!('duration' in data) || (data.duration is string && data.duration.size() <= 20))
+        && data.status in ['pending', 'completed', 'failed'];
+    }
+
+    // --- Collection Rules ---
+
+    match /users/{userId} {
+      allow get: if isSignedIn() && isOwner(userId);
+      allow create: if isSignedIn() && isOwner(userId) && isValidUser(incoming());
+      allow update: if isSignedIn() && isOwner(userId) && isValidUser(incoming())
+        && incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'photoURL']);
+    }
+
+    match /videos/{videoId} {
+      allow list: if isSignedIn() && resource.data.userId == request.auth.uid;
+      allow get: if isSignedIn() && resource.data.userId == request.auth.uid;
+      allow create: if isSignedIn() && isValidVideo(incoming()) && incoming().createdAt == request.time;
+      allow update: if isSignedIn() && isOwner(existing().userId) && isValidVideo(incoming())
+        && incoming().userId == existing().userId
+        && incoming().createdAt == existing().createdAt
+        && incoming().diff(existing()).affectedKeys().hasOnly([
+          'folder', 'title', 'status', 'videoData', 'mimeType', 'aspectRatio', 'duration',
+          'script', 'scenes', 'images', 'referenceImage', 'scene3dPreset'
+        ]);
+      allow delete: if isSignedIn() && isOwner(existing().userId);
+    }
+  }
+}
