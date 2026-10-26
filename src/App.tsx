@@ -6023,24 +6023,42 @@ export default function App() {
                               </select>
                             </div>
 
-                            <div className="flex items-center gap-2">
-                              <span className="text-xs font-medium text-slate-600">Duración:</span>
-                              <select
-                                value={sc.duration}
-                                onChange={(e) => {
-                                  const val = e.target.value;
-                                  setDraftScenes((prev) =>
-                                    prev.map((item, i) => (i === idx ? { ...item, duration: val } : item))
-                                  );
-                                }}
-                                className="bg-white border border-slate-200 rounded-lg px-2 py-1 text-xs font-mono font-semibold text-indigo-600 focus:outline-none focus:border-indigo-500"
-                              >
-                                {['2.5s', '3s', '4s', '5s', '8s', '10s', '15s'].map((d) => (
-                                  <option key={d} value={d}>
-                                    {d}
-                                  </option>
-                                ))}
-                              </select>
+                            <div className="flex flex-wrap items-center gap-2.5 bg-white border border-slate-200 rounded-xl px-3 py-1.5 shadow-2xs">
+                              <div className="flex items-center gap-1.5">
+                                <Clock className="w-3.5 h-3.5 text-indigo-500 shrink-0" />
+                                <label
+                                  htmlFor={`scene-duration-slider-${idx}`}
+                                  className="text-xs font-medium text-slate-600 whitespace-nowrap"
+                                >
+                                  Duración:
+                                </label>
+                              </div>
+
+                              <div className="flex items-center gap-2">
+                                <span className="text-[10px] font-mono text-slate-400 tabular-nums">1s</span>
+                                <input
+                                  id={`scene-duration-slider-${idx}`}
+                                  type="range"
+                                  min={1}
+                                  max={20}
+                                  step={0.5}
+                                  value={parseDurationSeconds(sc.duration, 4)}
+                                  onChange={(e) => {
+                                    const numericVal = parseFloat(e.target.value);
+                                    const formatted = `${Number.isFinite(numericVal) ? numericVal : 4}s`;
+                                    setDraftScenes((prev) =>
+                                      prev.map((item, i) => (i === idx ? { ...item, duration: formatted } : item))
+                                    );
+                                  }}
+                                  aria-label={`Duración de la escena ${idx + 1}`}
+                                  className="w-28 sm:w-36 h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-indigo-600 focus:outline-none"
+                                />
+                                <span className="text-[10px] font-mono text-slate-400 tabular-nums">20s</span>
+                              </div>
+
+                              <span className="px-2 py-0.5 rounded-md bg-indigo-50 border border-indigo-200 text-xs font-mono font-bold text-indigo-700 tabular-nums min-w-[3.25rem] text-center">
+                                {parseDurationSeconds(sc.duration, 4)}s
+                              </span>
 
                               {draftScenes.length > 1 && (
                                 <button
@@ -6048,7 +6066,7 @@ export default function App() {
                                   onClick={() =>
                                     setDraftScenes((prev) => prev.filter((_, itemIdx) => itemIdx !== idx))
                                   }
-                                  className="p-1.5 text-slate-400 hover:text-rose-600 rounded-lg hover:bg-rose-50 transition-colors"
+                                  className="p-1 text-slate-400 hover:text-rose-600 rounded-lg hover:bg-rose-50 transition-colors"
                                   title="Eliminar escena"
                                 >
                                   <Trash2 className="w-4 h-4" />

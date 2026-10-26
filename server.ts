@@ -4,6 +4,7 @@ import { WebSocketServer, WebSocket } from 'ws';
 import { createServer as createViteServer } from 'vite';
 import { GoogleGenAI, Type, Modality } from '@google/genai';
 import dotenv from 'dotenv';
+import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
@@ -231,9 +232,13 @@ async function generateSceneImageOrFallback(
 async function startServer() {
   const app = express();
   const httpServer = http.createServer(app);
-  const PORT = 3000;
+  const PORT = Number(process.env.PORT) || 3000;
 
   app.use(express.json({ limit: '50mb' }));
+
+  app.get('/api/health', (_req, res) => {
+    res.json({ status: 'ok', service: 'reelify-studio' });
+  });
 
   // 1. AI Endpoint for Multi-Scene Scriptwriting & Storyboard Planning
   app.post('/api/ai/plan', async (req, res) => {
@@ -702,7 +707,12 @@ async function startServer() {
     }
   });
 
-  if (process.env.NODE_ENV !== 'production') {
+  const distPath = path.join(__dirname, 'dist');
+  const isCompiledEntry = path.basename(__filename) === 'server.js';
+  const hasBuiltDist = fs.existsSync(path.join(distPath, 'index.html'));
+  const isProduction = process.env.NODE_ENV === 'production' || (isCompiledEntry && hasBuiltDist);
+
+  if (!isProduction) {
     const vite = await createViteServer({
       server: {
         middlewareMode: true,
@@ -713,7 +723,6 @@ async function startServer() {
     });
     app.use(vite.middlewares);
   } else {
-    const distPath = path.join(__dirname, 'dist');
     app.use(express.static(distPath));
     app.get('*', (_req, res) => {
       res.sendFile(path.join(distPath, 'index.html'));
