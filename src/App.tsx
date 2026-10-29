@@ -594,6 +594,56 @@ function saveLocalVideos(list: VideoProject[]) {
   }
 }
 
+export const WHOP_TARGET_URL = 'https://whop.com/@saulmente';
+const FREE_REGISTRATIONS_STORAGE_KEY = 'reelify_free_registrations_v1';
+
+export interface FreeBusinessRegistration {
+  id: string;
+  userId?: string;
+  name: string;
+  email: string;
+  businessName: string;
+  phone?: string;
+  planType: string;
+  targetUrl: string;
+  createdAt?: any;
+  createdAtIso?: string;
+}
+
+function loadLocalRegistrations(): FreeBusinessRegistration[] {
+  try {
+    const raw = localStorage.getItem(FREE_REGISTRATIONS_STORAGE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveLocalRegistrations(list: FreeBusinessRegistration[]) {
+  try {
+    localStorage.setItem(FREE_REGISTRATIONS_STORAGE_KEY, JSON.stringify(list.slice(0, 100)));
+  } catch {
+    // ignore
+  }
+}
+
+// Programmatically open https://whop.com/@saulmente without using window.open (iframe-safe anchor trigger)
+function triggerWhopRedirect(anchorEl?: HTMLAnchorElement | null) {
+  if (anchorEl) {
+    anchorEl.click();
+    return;
+  }
+  const a = document.createElement('a');
+  a.href = WHOP_TARGET_URL;
+  a.target = '_blank';
+  a.rel = 'noopener noreferrer';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+}
+
 function getThemeColors(seed: string): [string, string, string] {
   let hash = 0;
   for (let i = 0; i < seed.length; i++) {
@@ -1043,7 +1093,8 @@ const Sidebar = ({
   onSelect3DPreset,
   onCreateInFolder,
   onCreateInScenario,
-  onOpenCameraRecorder
+  onOpenCameraRecorder,
+  onOpenRegistrationModal
 }: { 
   activeTab: string; 
   setActiveTab: (t: string) => void; 
@@ -1059,6 +1110,7 @@ const Sidebar = ({
   onCreateInFolder: (folderName: string) => void;
   onCreateInScenario: (preset: SubjectPresetId) => void;
   onOpenCameraRecorder: () => void;
+  onOpenRegistrationModal: () => void;
 }) => (
   <aside className="w-64 bg-slate-900 text-slate-300 border-r border-slate-800 flex flex-col shrink-0">
     <div className="p-6">
@@ -1128,6 +1180,27 @@ const Sidebar = ({
           <Sparkles className="w-4 h-4 shrink-0 text-amber-400" />
           AI Production Suite
         </button>
+        <button
+          type="button"
+          onClick={onOpenRegistrationModal}
+          className="w-full flex items-center justify-between gap-2 px-4 py-2.5 rounded-lg text-xs font-bold transition-all whitespace-nowrap bg-emerald-600 hover:bg-emerald-500 text-white shadow-sm"
+          title="Registro Gratis para Usar Mi Negocio · Dirigido a https://whop.com/@saulmente"
+        >
+          <span className="flex items-center gap-2">
+            <Zap className="w-4 h-4 shrink-0 text-amber-300" />
+            <span>Registro Gratis · Negocio</span>
+          </span>
+          <ExternalLink className="w-3.5 h-3.5 shrink-0 opacity-90" />
+        </button>
+        <a
+          href={WHOP_TARGET_URL}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="w-full flex items-center justify-between gap-2 px-4 py-2 rounded-lg text-[11px] font-semibold transition-colors whitespace-nowrap bg-slate-800/90 hover:bg-indigo-600/30 text-emerald-300 border border-emerald-500/30"
+        >
+          <span className="truncate">whop.com/@saulmente</span>
+          <ExternalLink className="w-3 h-3 shrink-0" />
+        </a>
       </div>
 
       {/* Quick 3D Scene Selector + Create Video in Scenario in Sidebar */}
@@ -3464,6 +3537,299 @@ const AiProductionSuite = ({
   );
 };
 
+// Free Business Registration Modal -> Directs every registration to https://whop.com/@saulmente
+const FreeBusinessRegistrationModal = ({
+  isOpen,
+  onClose,
+  registrations,
+  onRegister,
+  isSubmitting,
+  lastRegistered,
+}: {
+  isOpen: boolean;
+  onClose: () => void;
+  registrations: FreeBusinessRegistration[];
+  onRegister: (payload: {
+    name: string;
+    email: string;
+    businessName: string;
+    phone: string;
+    planType: string;
+  }) => Promise<void>;
+  isSubmitting: boolean;
+  lastRegistered: FreeBusinessRegistration | null;
+}) => {
+  const [name, setName] = useState('');
+  const [email, setEmail] = useState('');
+  const [businessName, setBusinessName] = useState('');
+  const [phone, setPhone] = useState('');
+  const [planType, setPlanType] = useState('Acceso Gratis Total · Videos IA + Escenarios 3D + MP3/MP4');
+  const [formError, setFormError] = useState<string | null>(null);
+
+  if (!isOpen) return null;
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setFormError(null);
+    if (!name.trim() || !email.trim()) {
+      setFormError('Por favor ingresa tu nombre y correo electrónico para activar tu acceso gratis.');
+      return;
+    }
+    await onRegister({
+      name: name.trim(),
+      email: email.trim(),
+      businessName: businessName.trim() || 'Mi Negocio',
+      phone: phone.trim(),
+      planType,
+    });
+    setName('');
+    setEmail('');
+    setBusinessName('');
+    setPhone('');
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto">
+      <div className="bg-slate-900 border border-emerald-500/40 rounded-2xl max-w-2xl w-full overflow-hidden shadow-2xl text-white">
+        <div className="px-6 py-4 bg-gradient-to-r from-emerald-900/80 via-slate-900 to-indigo-950 border-b border-slate-800 flex items-center justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-emerald-500 text-slate-950 flex items-center justify-center font-bold shadow-md">
+              <Zap className="w-5 h-5" />
+            </div>
+            <div>
+              <span className="inline-block text-[10px] font-mono uppercase tracking-widest text-emerald-300">
+                REGISTRO OFICIAL 100% GRATIS · WHOP @SAULMENTE
+              </span>
+              <h2 className="text-lg font-bold text-white">
+                Registro Gratis para Usar Mi Negocio
+              </h2>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="p-2 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
+          >
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+
+        <div className="p-6 space-y-5 max-h-[82vh] overflow-y-auto">
+          <div className="p-3.5 rounded-xl bg-emerald-950/60 border border-emerald-500/30 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div className="text-xs text-emerald-100 space-y-0.5">
+              <div className="font-bold text-emerald-300 flex items-center gap-1.5">
+                <Check className="w-4 h-4" />
+                <span>Cada registro es dirigido automáticamente a Whop (@saulmente)</span>
+              </div>
+              <p className="text-emerald-200/80">
+                Regístrate gratis para usar todas las herramientas del negocio (Videos IA, Escenarios 3D, Cámara, MP3 y MP4) y acceder a{' '}
+                <span className="font-mono underline">{WHOP_TARGET_URL}</span>.
+              </p>
+            </div>
+            <a
+              href={WHOP_TARGET_URL}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="px-3.5 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 text-xs font-extrabold flex items-center gap-1.5 whitespace-nowrap shrink-0 shadow-sm"
+            >
+              <span>Ir a Whop (@saulmente)</span>
+              <ExternalLink className="w-3.5 h-3.5" />
+            </a>
+          </div>
+
+          {lastRegistered && (
+            <div className="p-4 rounded-xl bg-indigo-950/90 border-2 border-emerald-400 space-y-3">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <span className="inline-block px-2 py-0.5 rounded bg-emerald-500 text-slate-950 text-[10px] font-extrabold uppercase tracking-wider mb-1">
+                    ¡Registro Gratis Completado!
+                  </span>
+                  <h3 className="text-sm font-bold text-white">
+                    Bienvenido/a, {lastRegistered.name} ({lastRegistered.businessName})
+                  </h3>
+                  <p className="text-xs text-slate-300 mt-0.5">
+                    Tu registro ha sido guardado y dirigido a{' '}
+                    <span className="font-mono text-emerald-300">{WHOP_TARGET_URL}</span>.
+                  </p>
+                </div>
+              </div>
+              <div className="flex flex-wrap items-center gap-2.5">
+                <a
+                  href={WHOP_TARGET_URL}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="px-4 py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 text-xs font-extrabold flex items-center gap-2 shadow-md transition-colors"
+                >
+                  <span>Abrir Mi Acceso en https://whop.com/@saulmente</span>
+                  <ExternalLink className="w-4 h-4" />
+                </a>
+                <button
+                  type="button"
+                  onClick={onClose}
+                  className="px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold"
+                >
+                  Continuar Usando el Estudio Gratis
+                </button>
+              </div>
+            </div>
+          )}
+
+          <form onSubmit={handleSubmit} className="space-y-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+              <div>
+                <label className="block text-xs font-semibold text-slate-300 mb-1">
+                  Nombre Completo *
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  placeholder="Ej. Saúl García o tu nombre..."
+                  className="w-full bg-slate-950 border border-slate-700 focus:border-emerald-400 rounded-xl px-3.5 py-2.5 text-xs text-white outline-none"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-300 mb-1">
+                  Correo Electrónico *
+                </label>
+                <input
+                  type="email"
+                  required
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  placeholder="tucorreo@negocio.com"
+                  className="w-full bg-slate-950 border border-slate-700 focus:border-emerald-400 rounded-xl px-3.5 py-2.5 text-xs text-white outline-none"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-300 mb-1">
+                  Nombre de tu Negocio / Marca
+                </label>
+                <input
+                  type="text"
+                  value={businessName}
+                  onChange={(e) => setBusinessName(e.target.value)}
+                  placeholder="Ej. Agencia Digital, Tienda Online, Creador..."
+                  className="w-full bg-slate-950 border border-slate-700 focus:border-emerald-400 rounded-xl px-3.5 py-2.5 text-xs text-white outline-none"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-300 mb-1">
+                  WhatsApp o Teléfono (Opcional)
+                </label>
+                <input
+                  type="tel"
+                  value={phone}
+                  onChange={(e) => setPhone(e.target.value)}
+                  placeholder="+1 (555) 000-0000"
+                  className="w-full bg-slate-950 border border-slate-700 focus:border-emerald-400 rounded-xl px-3.5 py-2.5 text-xs text-white outline-none"
+                />
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold text-slate-300 mb-1">
+                ¿Qué deseas usar gratis en el negocio?
+              </label>
+              <select
+                value={planType}
+                onChange={(e) => setPlanType(e.target.value)}
+                className="w-full bg-slate-950 border border-slate-700 focus:border-emerald-400 rounded-xl px-3.5 py-2.5 text-xs text-white outline-none"
+              >
+                <option value="Acceso Gratis Total · Videos IA + Escenarios 3D + MP3/MP4">
+                  Acceso Gratis Total · Videos IA + Escenarios 3D + MP3/MP4
+                </option>
+                <option value="Comunidad & Negocio en Whop (@saulmente)">
+                  Comunidad & Negocio en Whop (@saulmente)
+                </option>
+                <option value="Creación de Anuncios Comerciales & Reels IA">
+                  Creación de Anuncios Comerciales & Reels IA
+                </option>
+                <option value="Producción Musical MP3 & Escenarios 3D">
+                  Producción Musical MP3 & Escenarios 3D
+                </option>
+              </select>
+            </div>
+
+            {formError && (
+              <div className="p-3 rounded-xl bg-rose-950/80 border border-rose-500/40 text-rose-200 text-xs flex items-center gap-2">
+                <AlertCircle className="w-4 h-4 shrink-0 text-rose-400" />
+                <span>{formError}</span>
+              </div>
+            )}
+
+            <button
+              type="submit"
+              disabled={isSubmitting}
+              className="w-full py-3.5 px-5 rounded-xl bg-emerald-500 hover:bg-emerald-400 disabled:opacity-50 text-slate-950 font-extrabold text-xs sm:text-sm flex items-center justify-center gap-2 shadow-lg transition-all"
+            >
+              {isSubmitting ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  <span>Registrando y dirigiendo a Whop (@saulmente)...</span>
+                </>
+              ) : (
+                <>
+                  <Zap className="w-4 h-4" />
+                  <span>Registrarme Gratis Ahora y Entrar a https://whop.com/@saulmente</span>
+                  <ExternalLink className="w-4 h-4" />
+                </>
+              )}
+            </button>
+          </form>
+
+          {registrations.length > 0 && (
+            <div className="pt-4 border-t border-slate-800 space-y-2.5">
+              <div className="flex items-center justify-between text-xs">
+                <span className="font-bold text-slate-300 uppercase tracking-wider">
+                  Registros Gratis Activos ({registrations.length}) → Dirigidos a Whop
+                </span>
+                <a
+                  href={WHOP_TARGET_URL}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-emerald-400 hover:underline font-mono text-[11px] flex items-center gap-1"
+                >
+                  <span>whop.com/@saulmente</span>
+                  <ExternalLink className="w-3 h-3" />
+                </a>
+              </div>
+              <div className="max-h-40 overflow-y-auto space-y-1.5 pr-1">
+                {registrations.slice(0, 12).map((reg) => (
+                  <div
+                    key={reg.id}
+                    className="p-2.5 rounded-xl bg-slate-950 border border-slate-800 flex items-center justify-between gap-2 text-xs"
+                  >
+                    <div className="min-w-0">
+                      <div className="font-bold text-white truncate">
+                        {reg.name}{' '}
+                        <span className="text-emerald-400 font-normal">· {reg.businessName}</span>
+                      </div>
+                      <div className="text-[11px] text-slate-400 truncate">
+                        {reg.email} · {reg.planType}
+                      </div>
+                    </div>
+                    <a
+                      href={reg.targetUrl || WHOP_TARGET_URL}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="px-2.5 py-1 rounded-lg bg-emerald-500/20 hover:bg-emerald-500 hover:text-slate-950 text-emerald-300 text-[11px] font-bold flex items-center gap-1 shrink-0 transition-colors"
+                    >
+                      <span>Whop</span>
+                      <ExternalLink className="w-3 h-3" />
+                    </a>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};
+
 const EmptyState = ({ onAction, hasSearchOrFilter, onResetFilter }: { onAction: () => void; hasSearchOrFilter?: boolean; onResetFilter?: () => void }) => (
   <div className="flex flex-col items-center justify-center py-20 text-center bg-white border border-slate-200 rounded-xl">
     <div className="w-14 h-14 bg-slate-100 rounded-full flex items-center justify-center mb-4">
@@ -3594,6 +3960,100 @@ export default function App() {
   const [voiceStatusText, setVoiceStatusText] = useState<string | null>(null);
   const liveWsRef = useRef<WebSocket | null>(null);
 
+  // Free Business Registration State (Directed to https://whop.com/@saulmente)
+  const [localRegistrations, setLocalRegistrations] = useState<FreeBusinessRegistration[]>(() =>
+    loadLocalRegistrations()
+  );
+  const [cloudRegistrations, setCloudRegistrations] = useState<FreeBusinessRegistration[]>([]);
+  const [isRegistrationModalOpen, setIsRegistrationModalOpen] = useState(false);
+  const [isSubmittingRegistration, setIsSubmittingRegistration] = useState(false);
+  const [lastRegisteredEntry, setLastRegisteredEntry] = useState<FreeBusinessRegistration | null>(null);
+  const [inlineRegName, setInlineRegName] = useState('');
+  const [inlineRegEmail, setInlineRegEmail] = useState('');
+  const [inlineRegBusiness, setInlineRegBusiness] = useState('');
+  const [inlineRegPhone, setInlineRegPhone] = useState('');
+  const whopRedirectAnchorRef = useRef<HTMLAnchorElement | null>(null);
+
+  const registrations = useMemo(() => {
+    const map = new Map<string, FreeBusinessRegistration>();
+    cloudRegistrations.forEach((r) => map.set(r.id, r));
+    localRegistrations.forEach((r) => {
+      if (!map.has(r.id)) map.set(r.id, r);
+    });
+    return Array.from(map.values());
+  }, [cloudRegistrations, localRegistrations]);
+
+  const handleRegisterFreeBusiness = async (payload: {
+    name: string;
+    email: string;
+    businessName: string;
+    phone: string;
+    planType: string;
+  }) => {
+    const cleanName = payload.name.trim();
+    const cleanEmail = payload.email.trim();
+    if (!cleanName || !cleanEmail) return;
+
+    setIsSubmittingRegistration(true);
+    // Immediately trigger navigation to https://whop.com/@saulmente inside the user gesture handler
+    triggerWhopRedirect(whopRedirectAnchorRef.current);
+
+    const newEntry: FreeBusinessRegistration = {
+      id: `reg-${Date.now()}`,
+      userId: user?.uid || 'guest',
+      name: cleanName.slice(0, 120),
+      email: cleanEmail.slice(0, 256),
+      businessName: (payload.businessName.trim() || 'Mi Negocio').slice(0, 160),
+      phone: payload.phone.trim().slice(0, 60),
+      planType: (payload.planType || 'Acceso Gratis Total · Negocio').slice(0, 80),
+      targetUrl: WHOP_TARGET_URL,
+      createdAtIso: new Date().toISOString(),
+    };
+
+    setLocalRegistrations((prev) => {
+      const next = [newEntry, ...prev];
+      saveLocalRegistrations(next);
+      return next;
+    });
+    setLastRegisteredEntry(newEntry);
+    setSaveBannerMessage(
+      `¡Registro gratis completado para "${newEntry.name}" (${newEntry.businessName})! Redirigiendo a ${WHOP_TARGET_URL}`
+    );
+
+    try {
+      await fetch('/api/registrations', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newEntry),
+      });
+    } catch {
+      // ignore network error; local & Firestore handle persistence
+    }
+
+    if (user) {
+      try {
+        await addDoc(collection(db, 'registrations'), {
+          userId: user.uid,
+          name: newEntry.name,
+          email: newEntry.email,
+          businessName: newEntry.businessName,
+          phone: newEntry.phone || '',
+          planType: newEntry.planType,
+          targetUrl: WHOP_TARGET_URL,
+          createdAt: serverTimestamp(),
+        });
+      } catch (err) {
+        try {
+          handleFirestoreError(err, OperationType.CREATE, 'registrations');
+        } catch {
+          // logged structured error
+        }
+      }
+    }
+
+    setIsSubmittingRegistration(false);
+  };
+
   useEffect(() => {
     return onAuthStateChanged(auth, (u) => {
       setUser(u);
@@ -3602,14 +4062,49 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    fetch('/api/registrations')
+      .then((r) => r.json())
+      .then((data) => {
+        if (Array.isArray(data?.registrations) && data.registrations.length > 0) {
+          setLocalRegistrations((prev) => {
+            const ids = new Set(prev.map((p) => p.id));
+            const merged = [...prev];
+            for (const item of data.registrations) {
+              if (!ids.has(item.id)) merged.push(item);
+            }
+            return merged;
+          });
+        }
+      })
+      .catch(() => {});
+  }, []);
+
+  useEffect(() => {
     if (!user) return;
+
+    const regQuery = query(
+      collection(db, 'registrations'),
+      where('userId', '==', user.uid)
+    );
+    const unsubReg = onSnapshot(
+      regQuery,
+      (snap) => {
+        const list = snap.docs.map(
+          (d) => ({ id: d.id, ...d.data() } as FreeBusinessRegistration)
+        );
+        setCloudRegistrations(list);
+      },
+      (err) => {
+        console.warn('Firestore registrations listener warning:', err);
+      }
+    );
 
     const q = query(
       collection(db, 'videos'),
       where('userId', '==', user.uid)
     );
 
-    return onSnapshot(q, (snapshot) => {
+    const unsubVids = onSnapshot(q, (snapshot) => {
       const vids = snapshot.docs
         .map(docSnap => ({ id: docSnap.id, ...docSnap.data() } as VideoProject))
         .sort((a, b) => {
@@ -3625,6 +4120,11 @@ export default function App() {
     }, (err) => {
       console.warn('Firestore listener warning:', err);
     });
+
+    return () => {
+      unsubReg();
+      unsubVids();
+    };
   }, [user]);
 
   const videos = useMemo(() => {
@@ -5086,7 +5586,19 @@ export default function App() {
             openCamera: true,
           })
         }
+        onOpenRegistrationModal={() => setIsRegistrationModalOpen(true)}
       />
+
+      {/* Hidden anchor used to direct every completed registration immediately to https://whop.com/@saulmente */}
+      <a
+        ref={whopRedirectAnchorRef}
+        href={WHOP_TARGET_URL}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="hidden"
+      >
+        Whop @saulmente
+      </a>
       
       <main className="flex-1 overflow-auto">
         <header className="h-16 bg-white border-b border-slate-200 px-8 flex items-center justify-between sticky top-0 z-10">
@@ -5118,6 +5630,16 @@ export default function App() {
           )}
           
           <div className="flex items-center gap-2.5 shrink-0">
+            <button
+              type="button"
+              onClick={() => setIsRegistrationModalOpen(true)}
+              className="px-3.5 py-2 rounded-lg text-xs font-extrabold bg-emerald-600 hover:bg-emerald-500 text-white transition-colors flex items-center gap-1.5 whitespace-nowrap shrink-0 shadow-xs"
+              title="Registro Gratis para Usar Mi Negocio · Dirigido a https://whop.com/@saulmente"
+            >
+              <Zap className="w-4 h-4 text-amber-300" />
+              <span>Registro Gratis · Mi Negocio</span>
+              <ExternalLink className="w-3.5 h-3.5" />
+            </button>
             <button
               onClick={() => setIsCameraModalOpen(true)}
               className="px-3.5 py-2 rounded-lg text-xs font-semibold bg-rose-600 hover:bg-rose-500 text-white transition-colors flex items-center gap-1.5 whitespace-nowrap shrink-0 shadow-xs"
@@ -5167,14 +5689,25 @@ export default function App() {
         )}
 
         {saveBannerMessage && (
-          <div className="bg-emerald-900 text-emerald-100 px-8 py-2.5 text-xs font-medium flex items-center justify-between">
+          <div className="bg-emerald-900 text-emerald-100 px-8 py-2.5 text-xs font-medium flex items-center justify-between gap-4">
             <span className="flex items-center gap-2">
-              <Check className="w-4 h-4 text-emerald-400" />
-              {saveBannerMessage}
+              <Check className="w-4 h-4 text-emerald-400 shrink-0" />
+              <span>{saveBannerMessage}</span>
             </span>
-            <button onClick={() => setSaveBannerMessage(null)} className="text-emerald-300 hover:text-white">
-              Cerrar
-            </button>
+            <div className="flex items-center gap-3 shrink-0">
+              <a
+                href={WHOP_TARGET_URL}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="px-2.5 py-1 rounded bg-emerald-500 text-slate-950 font-extrabold text-[11px] flex items-center gap-1 hover:bg-emerald-400"
+              >
+                <span>Abrir Whop (@saulmente)</span>
+                <ExternalLink className="w-3 h-3" />
+              </a>
+              <button onClick={() => setSaveBannerMessage(null)} className="text-emerald-300 hover:text-white">
+                Cerrar
+              </button>
+            </div>
           </div>
         )}
 
@@ -5188,6 +5721,144 @@ export default function App() {
             onChange={handleEasyLoadFile}
             className="hidden"
           />
+
+          {/* BANNER DE REGISTRO GRATIS PARA USAR MI NEGOCIO -> CADA REGISTRO DIRIGIDO A https://whop.com/@saulmente */}
+          <div className="mb-6 bg-gradient-to-r from-slate-950 via-emerald-950 to-slate-900 border-2 border-emerald-500/60 rounded-2xl p-5 text-white shadow-lg space-y-4">
+            <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+              <div className="space-y-1">
+                <div className="inline-flex items-center gap-2 px-2.5 py-0.5 rounded-md bg-emerald-500/20 border border-emerald-400/40 text-emerald-300 text-[11px] font-mono font-bold">
+                  <Zap className="w-3.5 h-3.5 text-amber-300" />
+                  <span>ACCESO 100% GRATIS A MI NEGOCIO · DIRIGIDO A WHOP (@SAULMENTE)</span>
+                </div>
+                <h2 className="text-lg sm:text-xl font-extrabold text-white">
+                  Regístrate Gratis para Usar Mi Negocio y Entra Directo a{' '}
+                  <a
+                    href={WHOP_TARGET_URL}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-emerald-400 underline hover:text-emerald-300"
+                  >
+                    whop.com/@saulmente
+                  </a>
+                </h2>
+                <p className="text-xs text-slate-300 max-w-3xl">
+                  Completa tu registro rápido aquí abajo: cada registro activa el uso gratis de las herramientas de mi negocio y te dirige automáticamente a{' '}
+                  <span className="font-mono text-emerald-300">{WHOP_TARGET_URL}</span>.
+                </p>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2.5 shrink-0">
+                <a
+                  href={WHOP_TARGET_URL}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="px-4 py-2.5 rounded-xl bg-white/10 hover:bg-white/20 border border-white/20 text-white text-xs font-bold flex items-center gap-1.5 whitespace-nowrap transition-colors"
+                >
+                  <span>Visitar https://whop.com/@saulmente</span>
+                  <ExternalLink className="w-3.5 h-3.5 text-emerald-400" />
+                </a>
+                <button
+                  type="button"
+                  onClick={() => setIsRegistrationModalOpen(true)}
+                  className="px-4 py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 text-xs font-extrabold flex items-center gap-1.5 whitespace-nowrap shadow-md transition-colors"
+                >
+                  <Zap className="w-4 h-4" />
+                  <span>Ver Registros ({registrations.length}) / Formulario Completo</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Inline Quick Registration Form -> Directs immediately to https://whop.com/@saulmente */}
+            <form
+              onSubmit={async (e) => {
+                e.preventDefault();
+                if (!inlineRegName.trim() || !inlineRegEmail.trim()) return;
+                await handleRegisterFreeBusiness({
+                  name: inlineRegName,
+                  email: inlineRegEmail,
+                  businessName: inlineRegBusiness || 'Mi Negocio',
+                  phone: inlineRegPhone,
+                  planType: 'Acceso Gratis Total · Negocio Whop (@saulmente)',
+                });
+                setInlineRegName('');
+                setInlineRegEmail('');
+                setInlineRegBusiness('');
+                setInlineRegPhone('');
+              }}
+              className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-2.5 pt-2 border-t border-emerald-500/20"
+            >
+              <input
+                type="text"
+                required
+                value={inlineRegName}
+                onChange={(e) => setInlineRegName(e.target.value)}
+                placeholder="Tu Nombre Completo *"
+                className="bg-slate-900/90 border border-slate-700 focus:border-emerald-400 rounded-xl px-3.5 py-2.5 text-xs text-white placeholder-slate-400 outline-none"
+              />
+              <input
+                type="email"
+                required
+                value={inlineRegEmail}
+                onChange={(e) => setInlineRegEmail(e.target.value)}
+                placeholder="Tu Correo Electrónico *"
+                className="bg-slate-900/90 border border-slate-700 focus:border-emerald-400 rounded-xl px-3.5 py-2.5 text-xs text-white placeholder-slate-400 outline-none"
+              />
+              <input
+                type="text"
+                value={inlineRegBusiness}
+                onChange={(e) => setInlineRegBusiness(e.target.value)}
+                placeholder="Nombre de tu Negocio / Proyecto"
+                className="bg-slate-900/90 border border-slate-700 focus:border-emerald-400 rounded-xl px-3.5 py-2.5 text-xs text-white placeholder-slate-400 outline-none"
+              />
+              <input
+                type="tel"
+                value={inlineRegPhone}
+                onChange={(e) => setInlineRegPhone(e.target.value)}
+                placeholder="WhatsApp / Teléfono (Opcional)"
+                className="bg-slate-900/90 border border-slate-700 focus:border-emerald-400 rounded-xl px-3.5 py-2.5 text-xs text-white placeholder-slate-400 outline-none"
+              />
+              <button
+                type="submit"
+                disabled={isSubmittingRegistration}
+                className="py-2.5 px-4 rounded-xl bg-emerald-500 hover:bg-emerald-400 disabled:opacity-50 text-slate-950 font-extrabold text-xs flex items-center justify-center gap-1.5 shadow-md transition-all whitespace-nowrap"
+              >
+                {isSubmittingRegistration ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    <span>Dirigiendo a Whop...</span>
+                  </>
+                ) : (
+                  <>
+                    <Zap className="w-4 h-4" />
+                    <span>Registrarme Gratis → Whop</span>
+                    <ExternalLink className="w-3.5 h-3.5" />
+                  </>
+                )}
+              </button>
+            </form>
+
+            {lastRegisteredEntry && (
+              <div className="p-3 rounded-xl bg-emerald-500/15 border border-emerald-400/50 flex flex-wrap items-center justify-between gap-3 text-xs">
+                <div className="flex items-center gap-2 text-emerald-200">
+                  <Check className="w-4 h-4 text-emerald-400 shrink-0" />
+                  <span>
+                    Registro activo: <strong>{lastRegisteredEntry.name}</strong> ({lastRegisteredEntry.businessName}) — dirigido a{' '}
+                    <span className="font-mono underline">{WHOP_TARGET_URL}</span>
+                  </span>
+                </div>
+                <a
+                  href={WHOP_TARGET_URL}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="px-3 py-1.5 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-extrabold text-xs flex items-center gap-1.5"
+                >
+                  <span>Continuar a https://whop.com/@saulmente</span>
+                  <ExternalLink className="w-3.5 h-3.5" />
+                </a>
+              </div>
+            )}
+          </div>
+
           {activeTab === 'ai-suite' ? (
             <AiProductionSuite
               onOpenProteinIn3D={(proteinTitle) => handleLaunch3DPreset('protein', proteinTitle)}
@@ -6771,6 +7442,15 @@ export default function App() {
           }}
         />
       )}
+
+      <FreeBusinessRegistrationModal
+        isOpen={isRegistrationModalOpen}
+        onClose={() => setIsRegistrationModalOpen(false)}
+        registrations={registrations}
+        onRegister={handleRegisterFreeBusiness}
+        isSubmitting={isSubmittingRegistration}
+        lastRegistered={lastRegisteredEntry}
+      />
     </div>
   );
 }

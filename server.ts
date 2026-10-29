@@ -748,6 +748,58 @@ Devuelve un JSON con:
     });
   });
 
+  // Free Business Registrations Endpoint -> Directs every registration to https://whop.com/@saulmente
+  const WHOP_TARGET_URL = 'https://whop.com/@saulmente';
+  const serverRegistrations: Array<{
+    id: string;
+    name: string;
+    email: string;
+    businessName: string;
+    phone?: string;
+    planType: string;
+    targetUrl: string;
+    createdAtIso: string;
+  }> = [];
+
+  app.get('/api/registrations', (_req, res) => {
+    res.json({
+      success: true,
+      targetUrl: WHOP_TARGET_URL,
+      registrations: serverRegistrations,
+    });
+  });
+
+  app.post('/api/registrations', (req, res) => {
+    const { name, email, businessName, phone, planType } = req.body || {};
+    const cleanName = typeof name === 'string' ? name.trim() : '';
+    const cleanEmail = typeof email === 'string' ? email.trim() : '';
+    if (!cleanName || !cleanEmail) {
+      return res.status(400).json({ error: 'Nombre y correo electrónico son obligatorios.' });
+    }
+
+    const entry = {
+      id: `reg-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+      name: cleanName.slice(0, 120),
+      email: cleanEmail.slice(0, 256),
+      businessName: typeof businessName === 'string' && businessName.trim() ? businessName.trim().slice(0, 160) : 'Mi Negocio',
+      phone: typeof phone === 'string' ? phone.trim().slice(0, 60) : '',
+      planType: typeof planType === 'string' && planType.trim() ? planType.trim().slice(0, 80) : 'Acceso Gratis Total · Negocio',
+      targetUrl: WHOP_TARGET_URL,
+      createdAtIso: new Date().toISOString(),
+    };
+
+    serverRegistrations.unshift(entry);
+    if (serverRegistrations.length > 200) {
+      serverRegistrations.pop();
+    }
+
+    return res.json({
+      success: true,
+      redirectUrl: WHOP_TARGET_URL,
+      registration: entry,
+    });
+  });
+
   // 6. Real-Time Voice Director WebSocket Proxy (/live -> gemini-3.8-live)
   const wss = new WebSocketServer({ server: httpServer, path: '/live' });
 

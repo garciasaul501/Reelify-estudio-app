@@ -37,6 +37,23 @@
         "interactionId": { "type": "string", "description": "Gemini Interaction ID for tracking." }
       },
       "required": ["userId", "prompt", "status", "createdAt"]
+    },
+    "Registration": {
+      "title": "Registration",
+      "description": "Free business registration directed to https://whop.com/@saulmente.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Unique identifier for the registration." },
+        "userId": { "type": "string", "description": "UID of the user or guest identifier." },
+        "name": { "type": "string", "maxLength": 120, "description": "Full name of the registrant." },
+        "email": { "type": "string", "maxLength": 256, "description": "Email address of the registrant." },
+        "businessName": { "type": "string", "maxLength": 160, "description": "Business, brand, or project name." },
+        "phone": { "type": "string", "maxLength": 60, "description": "Optional phone or WhatsApp number." },
+        "planType": { "type": "string", "maxLength": 80, "description": "Selected free business use case." },
+        "targetUrl": { "type": "string", "maxLength": 200, "description": "Destination URL (https://whop.com/@saulmente)." },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Timestamp of registration." }
+      },
+      "required": ["name", "email", "targetUrl", "createdAt"]
     }
   },
   "firestore": {
@@ -47,6 +64,10 @@
     "/videos/{videoId}": {
       "schema": "Video",
       "description": "Generated video document."
+    },
+    "/registrations/{registrationId}": {
+      "schema": "Registration",
+      "description": "Free business registration document directed to https://whop.com/@saulmente."
     }
   }
 }

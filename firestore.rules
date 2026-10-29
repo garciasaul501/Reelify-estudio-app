@@ -56,6 +56,26 @@ service cloud.firestore {
         && data.status in ['pending', 'completed', 'failed'];
     }
 
+    function isAdmin() {
+      return isSignedIn()
+        && request.auth.token.email == 'garciasaul501@gmail.com'
+        && request.auth.token.email_verified == true;
+    }
+
+    function isValidRegistration(data) {
+      return data.keys().hasAll(['name', 'email', 'targetUrl', 'createdAt'])
+        && data.keys().hasOnly([
+          'id', 'userId', 'name', 'email', 'businessName', 'phone', 'planType', 'targetUrl', 'createdAt'
+        ])
+        && data.name is string && data.name.size() >= 1 && data.name.size() <= 120
+        && data.email is string && data.email.size() >= 3 && data.email.size() <= 256
+        && data.targetUrl == 'https://whop.com/@saulmente'
+        && (!('userId' in data) || (data.userId is string && data.userId.size() <= 128))
+        && (!('businessName' in data) || (data.businessName is string && data.businessName.size() <= 160))
+        && (!('phone' in data) || (data.phone is string && data.phone.size() <= 60))
+        && (!('planType' in data) || (data.planType is string && data.planType.size() <= 80));
+    }
+
     // --- Collection Rules ---
 
     match /users/{userId} {
@@ -77,6 +97,15 @@ service cloud.firestore {
           'script', 'scenes', 'images', 'referenceImage', 'scene3dPreset'
         ]);
       allow delete: if isSignedIn() && isOwner(existing().userId);
+    }
+
+    match /registrations/{registrationId} {
+      allow list, get: if isSignedIn() && (resource.data.userId == request.auth.uid || isAdmin());
+      allow create: if isSignedIn()
+        && isValidRegistration(incoming())
+        && incoming().userId == request.auth.uid
+        && incoming().createdAt == request.time;
+      allow delete: if isSignedIn() && (existing().userId == request.auth.uid || isAdmin());
     }
   }
 }
