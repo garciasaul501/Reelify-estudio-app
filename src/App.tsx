@@ -1035,28 +1035,28 @@ const ProceduralVideoCanvas = ({
 
       ctx.restore();
 
-      // Cinema letterbox bar & Storyboard HUD metadata (Silent Scenario + Gold On-Screen Text)
-      ctx.fillStyle = 'rgba(7, 9, 14, 0.90)';
+      // Cinema letterbox bar & Storyboard HUD metadata (Silent Scenario + White & Neon On-Screen Text)
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.94)';
       ctx.fillRect(0, h - 80, w, 80);
-      ctx.strokeStyle = 'rgba(245, 208, 97, 0.55)';
-      ctx.lineWidth = 1.5;
+      ctx.strokeStyle = '#ff007f';
+      ctx.lineWidth = 2.5;
       ctx.beginPath();
       ctx.moveTo(0, h - 80);
       ctx.lineTo(w, h - 80);
       ctx.stroke();
 
-      ctx.fillStyle = '#fbbf24';
-      ctx.font = '600 12px "JetBrains Mono", monospace';
+      ctx.fillStyle = '#00b8d4';
+      ctx.font = 'bold 12px "JetBrains Mono", monospace';
       const presetBadge = activeScene.scene3dPreset ? ` · 3D: ${activeScene.scene3dPreset.toUpperCase()}` : '';
       const filterBadge = activeFilterPreset.id !== 'none' ? ` · FILTER: ${activeFilterPreset.label.toUpperCase()}` : '';
       ctx.fillText(
-        `EDICIÓN ORO · ESCENA ${sceneIdx + 1}/${scenes.length} (${activeScene.duration}) · TEXTO EN PANTALLA${presetBadge}${filterBadge}`,
+        `EDICIÓN NEÓN & BLANCO · ESCENA ${sceneIdx + 1}/${scenes.length} (${activeScene.duration}) · TEXTO EN PANTALLA${presetBadge}${filterBadge}`,
         22,
         h - 50
       );
 
-      ctx.fillStyle = '#fde047';
-      ctx.font = 'bold 15px "Cinzel", Georgia, serif';
+      ctx.fillStyle = '#ff007f';
+      ctx.font = 'bold 15px "Plus Jakarta Sans", sans-serif';
       const rawText =
         activeScene.overlayText ||
         video.customTextOverlay ||
@@ -1129,23 +1129,27 @@ const Sidebar = ({
   onDragLeaveFolder?: () => void;
   onDropToFolder?: (folderName: string, e: React.DragEvent) => void;
 }) => (
-  <aside className="w-64 bg-slate-900 text-slate-300 border-r border-slate-800 flex flex-col shrink-0">
-    <div className="p-6">
-      <h1 className="text-xl font-bold text-white flex items-center gap-2 whitespace-nowrap">
-        <Video className="w-6 h-6 text-indigo-500 shrink-0" />
-        Reelify Video AI
+  <aside className="w-64 bg-white text-violet-800 border-r-2 border-cyan-400 flex flex-col shrink-0 shadow-lg">
+    <div className="p-6 border-b border-cyan-300/60">
+      <h1 className="text-xl font-extrabold text-fuchsia-600 flex items-center gap-2 whitespace-nowrap">
+        <Video className="w-6 h-6 text-cyan-500 shrink-0" />
+        <span className="text-neon-electric">Reelify Video AI</span>
       </h1>
     </div>
     
-    <nav className="flex-1 px-4 space-y-6 overflow-y-auto">
-      <div className="space-y-1">
+    <nav className="flex-1 px-4 py-4 space-y-6 overflow-y-auto">
+      <div className="space-y-1.5">
         <button 
           onClick={() => {
             setActiveTab('dashboard');
             onSelectFolder('all');
             if (showOnlyLiked) onToggleShowOnlyLiked();
           }}
-          className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-lg text-sm font-medium transition-colors whitespace-nowrap ${activeTab === 'dashboard' && selectedFolder === 'all' && !showOnlyLiked ? 'bg-indigo-600 text-white' : 'hover:bg-slate-800 text-slate-300'}`}
+          className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-lg text-sm font-bold transition-all whitespace-nowrap ${
+            activeTab === 'dashboard' && selectedFolder === 'all' && !showOnlyLiked
+              ? 'bg-gradient-to-r from-fuchsia-600 via-violet-600 to-cyan-500 text-white shadow-md'
+              : 'hover:bg-cyan-50 text-violet-700 border border-transparent hover:border-cyan-300'
+          }`}
         >
           <LayoutDashboard className="w-4 h-4 shrink-0" />
           Todos los Videos
@@ -1155,96 +1159,108 @@ const Sidebar = ({
             setActiveTab('dashboard');
             onToggleShowOnlyLiked();
           }}
-          className={`w-full flex items-center justify-between px-4 py-2.5 rounded-lg text-sm font-medium transition-colors whitespace-nowrap ${
+          className={`w-full flex items-center justify-between px-4 py-2.5 rounded-lg text-sm font-bold transition-all whitespace-nowrap ${
             activeTab === 'dashboard' && showOnlyLiked
-              ? 'bg-pink-600 text-white'
-              : 'hover:bg-slate-800 text-pink-300'
+              ? 'bg-fuchsia-600 text-white shadow-md'
+              : 'hover:bg-pink-50 text-fuchsia-600 border border-fuchsia-300'
           }`}
         >
           <span className="flex items-center gap-3">
-            <Heart className={`w-4 h-4 shrink-0 ${showOnlyLiked ? 'fill-white text-white' : 'fill-pink-500 text-pink-500'}`} />
+            <Heart className={`w-4 h-4 shrink-0 ${showOnlyLiked ? 'fill-white text-white' : 'fill-fuchsia-500 text-fuchsia-500'}`} />
             Mis Gustas
           </span>
-          <span className="px-1.5 py-0.5 rounded-md bg-slate-950/50 text-xs font-mono tabular-nums">
+          <span className={`px-1.5 py-0.5 rounded-md text-xs font-mono tabular-nums ${showOnlyLiked ? 'bg-white/25 text-white' : 'bg-fuchsia-100 text-fuchsia-700'}`}>
             {likedCount}
           </span>
         </button>
         <button 
           onClick={onOpenCameraRecorder}
-          className="w-full flex items-center gap-3 px-4 py-2.5 rounded-lg text-sm font-semibold transition-colors whitespace-nowrap bg-rose-600/20 text-rose-200 hover:bg-rose-600 hover:text-white border border-rose-500/30"
+          className="w-full flex items-center gap-3 px-4 py-2.5 rounded-lg text-sm font-bold transition-all whitespace-nowrap bg-white text-fuchsia-600 hover:bg-fuchsia-600 hover:text-white border-2 border-fuchsia-400"
         >
-          <Camera className="w-4 h-4 shrink-0 text-rose-400" />
+          <Camera className="w-4 h-4 shrink-0 text-cyan-500" />
           Grabar con Cámara
         </button>
         <button 
           onClick={() => setActiveTab('create')}
-          className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-lg text-sm font-medium transition-colors whitespace-nowrap ${activeTab === 'create' ? 'bg-indigo-600 text-white' : 'hover:bg-slate-800 text-slate-300'}`}
+          className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-lg text-sm font-bold transition-all whitespace-nowrap ${
+            activeTab === 'create'
+              ? 'bg-gradient-to-r from-fuchsia-600 via-violet-600 to-cyan-500 text-white shadow-md'
+              : 'hover:bg-cyan-50 text-violet-700 border border-transparent hover:border-cyan-300'
+          }`}
         >
-          <Film className="w-4 h-4 shrink-0 text-indigo-400" />
+          <Film className="w-4 h-4 shrink-0 text-fuchsia-500" />
           Crear Multi-Escenas
         </button>
         <button 
           onClick={() => setActiveTab('studio3d')}
-          className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-lg text-sm font-medium transition-colors whitespace-nowrap ${activeTab === 'studio3d' ? 'bg-indigo-600 text-white' : 'hover:bg-slate-800 text-slate-300'}`}
+          className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-lg text-sm font-bold transition-all whitespace-nowrap ${
+            activeTab === 'studio3d'
+              ? 'bg-gradient-to-r from-fuchsia-600 via-violet-600 to-cyan-500 text-white shadow-md'
+              : 'hover:bg-cyan-50 text-violet-700 border border-transparent hover:border-cyan-300'
+          }`}
         >
-          <Box className="w-4 h-4 shrink-0" />
+          <Box className="w-4 h-4 shrink-0 text-cyan-500" />
           3D Cinema Stage
         </button>
         <button 
           onClick={() => setActiveTab('ai-suite')}
-          className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-lg text-sm font-medium transition-colors whitespace-nowrap ${activeTab === 'ai-suite' ? 'bg-indigo-600 text-white' : 'hover:bg-slate-800 text-slate-300'}`}
+          className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-lg text-sm font-bold transition-all whitespace-nowrap ${
+            activeTab === 'ai-suite'
+              ? 'bg-gradient-to-r from-fuchsia-600 via-violet-600 to-cyan-500 text-white shadow-md'
+              : 'hover:bg-cyan-50 text-violet-700 border border-transparent hover:border-cyan-300'
+          }`}
         >
-          <Sparkles className="w-4 h-4 shrink-0 text-amber-400" />
+          <Sparkles className="w-4 h-4 shrink-0 text-fuchsia-500" />
           AI Production Suite
         </button>
         <button
           type="button"
           onClick={onOpenRegistrationModal}
-          className="w-full flex items-center justify-between gap-2 px-4 py-2.5 rounded-lg text-xs font-bold transition-all whitespace-nowrap bg-emerald-600 hover:bg-emerald-500 text-white shadow-sm"
+          className="w-full flex items-center justify-between gap-2 px-4 py-2.5 rounded-lg text-xs font-extrabold transition-all whitespace-nowrap bg-gradient-to-r from-fuchsia-600 via-violet-600 to-cyan-500 hover:from-fuchsia-500 hover:to-cyan-400 text-white shadow-md"
           title="Registro Gratis para Usar Mi Negocio · Dirigido a https://whop.com/@saulmente"
         >
           <span className="flex items-center gap-2">
-            <Zap className="w-4 h-4 shrink-0 text-amber-300" />
+            <Zap className="w-4 h-4 shrink-0 text-yellow-300" />
             <span>Registro Gratis · Negocio</span>
           </span>
-          <ExternalLink className="w-3.5 h-3.5 shrink-0 opacity-90" />
+          <ExternalLink className="w-3.5 h-3.5 shrink-0 opacity-95" />
         </button>
         <a
           href={WHOP_TARGET_URL}
           target="_blank"
           rel="noopener noreferrer"
-          className="w-full flex items-center justify-between gap-2 px-4 py-2 rounded-lg text-[11px] font-semibold transition-colors whitespace-nowrap bg-slate-800/90 hover:bg-indigo-600/30 text-emerald-300 border border-emerald-500/30"
+          className="w-full flex items-center justify-between gap-2 px-4 py-2 rounded-lg text-[11px] font-bold transition-colors whitespace-nowrap bg-white hover:bg-cyan-50 text-fuchsia-600 border-2 border-cyan-400"
         >
           <span className="truncate">whop.com/@saulmente</span>
-          <ExternalLink className="w-3 h-3 shrink-0" />
+          <ExternalLink className="w-3 h-3 shrink-0 text-cyan-600" />
         </a>
       </div>
 
       {/* Quick 3D Scene Selector + Create Video in Scenario in Sidebar */}
       <div>
         <div className="px-4 mb-2 flex items-center justify-between">
-          <span className="text-xs font-semibold text-slate-500 tracking-wider">Escenarios 3D</span>
-          <span className="text-xs text-slate-500 font-mono tabular-nums">{STAGE_3D_PRESETS.length}</span>
+          <span className="text-xs font-extrabold text-fuchsia-600 tracking-wider uppercase">Escenarios 3D</span>
+          <span className="text-xs text-cyan-600 font-mono font-bold tabular-nums">{STAGE_3D_PRESETS.length}</span>
         </div>
-        <div className="space-y-0.5">
+        <div className="space-y-1">
           {STAGE_3D_PRESETS.map((scenePreset) => (
             <div
               key={scenePreset.id}
-              className="flex items-center justify-between px-2 py-1 rounded-lg hover:bg-slate-800/60 group transition-colors"
+              className="flex items-center justify-between px-2 py-1 rounded-lg hover:bg-cyan-50 group transition-colors border border-transparent hover:border-cyan-300"
             >
               <button
                 type="button"
                 onClick={() => onSelect3DPreset(scenePreset.id)}
-                className="flex-1 flex items-center gap-2 px-2 py-1 text-xs text-slate-400 group-hover:text-white text-left min-w-0"
+                className="flex-1 flex items-center gap-2 px-2 py-1 text-xs font-semibold text-violet-700 group-hover:text-fuchsia-600 text-left min-w-0"
                 title={`Abrir ${scenePreset.name} en 3D`}
               >
-                <Box className="w-3.5 h-3.5 text-indigo-400 shrink-0" />
+                <Box className="w-3.5 h-3.5 text-cyan-500 shrink-0" />
                 <span className="truncate">{scenePreset.name}</span>
               </button>
               <button
                 type="button"
                 onClick={() => onCreateInScenario(scenePreset.id)}
-                className="px-1.5 py-0.5 rounded bg-indigo-600/20 hover:bg-indigo-600 text-indigo-300 hover:text-white text-[10px] font-semibold flex items-center gap-0.5 shrink-0 transition-colors"
+                className="px-2 py-0.5 rounded bg-fuchsia-600 hover:bg-fuchsia-500 text-white text-[10px] font-bold flex items-center gap-0.5 shrink-0 transition-colors"
                 title={`Crear video en el escenario ${scenePreset.name}`}
               >
                 <Plus className="w-3 h-3" />
@@ -1258,12 +1274,12 @@ const Sidebar = ({
       {/* Folders List + Drag & Drop Target + Create Video in Folder Button in Sidebar */}
       <div>
         <div className="px-4 mb-2 flex items-center justify-between">
-          <span className="text-xs font-semibold text-slate-500 tracking-wider">
+          <span className="text-xs font-extrabold text-fuchsia-600 tracking-wider uppercase">
             {draggingVideoCount > 0 ? 'Suelta aquí en Carpeta' : 'Folders'}
           </span>
-          <span className="text-xs text-slate-500 font-mono tabular-nums">{folders.length}</span>
+          <span className="text-xs text-cyan-600 font-mono font-bold tabular-nums">{folders.length}</span>
         </div>
-        <div className="space-y-0.5">
+        <div className="space-y-1">
           {folders.map((f) => {
             const isActive = activeTab === 'dashboard' && selectedFolder === f.name;
             const isDropTarget = dragOverFolder === `sidebar:${f.name}`;
@@ -1282,12 +1298,12 @@ const Sidebar = ({
                 }}
                 className={`flex items-center justify-between px-2 py-1 rounded-lg transition-all group ${
                   isDropTarget
-                    ? 'bg-indigo-600 text-white ring-2 ring-indigo-400 scale-[1.02]'
+                    ? 'bg-fuchsia-600 text-white ring-2 ring-cyan-400 scale-[1.02]'
                     : draggingVideoCount > 0
-                    ? 'border border-dashed border-indigo-500/50 bg-slate-800/80 text-indigo-200'
+                    ? 'border-2 border-dashed border-fuchsia-500 bg-fuchsia-50 text-fuchsia-700'
                     : isActive
-                    ? 'bg-slate-800 text-white font-medium'
-                    : 'text-slate-400 hover:bg-slate-800/60 hover:text-slate-200'
+                    ? 'bg-cyan-50 text-fuchsia-600 border border-cyan-400 font-bold'
+                    : 'text-violet-700 hover:bg-cyan-50 hover:text-fuchsia-600'
                 }`}
               >
                 <button
@@ -1300,21 +1316,21 @@ const Sidebar = ({
                 >
                   <Folder
                     className={`w-4 h-4 shrink-0 ${
-                      isDropTarget ? 'text-white' : isActive ? 'text-indigo-400' : 'text-slate-500'
+                      isDropTarget ? 'text-white' : isActive ? 'text-fuchsia-600' : 'text-cyan-500'
                     }`}
                   />
                   <span className="truncate">{f.name}</span>
-                  <span className="text-xs text-slate-400 font-mono tabular-nums shrink-0">({f.count})</span>
+                  <span className="text-xs text-cyan-600 font-mono tabular-nums shrink-0">({f.count})</span>
                 </button>
                 {isDropTarget ? (
-                  <span className="px-1.5 py-0.5 rounded bg-white/20 text-white text-[10px] font-bold shrink-0">
+                  <span className="px-1.5 py-0.5 rounded bg-white text-fuchsia-600 text-[10px] font-bold shrink-0">
                     Soltar
                   </span>
                 ) : (
                   <button
                     type="button"
                     onClick={() => onCreateInFolder(f.name)}
-                    className="px-1.5 py-0.5 rounded bg-indigo-600/20 hover:bg-indigo-600 text-indigo-300 hover:text-white text-[10px] font-semibold flex items-center gap-0.5 shrink-0 transition-colors"
+                    className="px-2 py-0.5 rounded bg-cyan-500 hover:bg-fuchsia-600 text-white text-[10px] font-bold flex items-center gap-0.5 shrink-0 transition-colors"
                     title={`Crear video en la carpeta "${f.name}"`}
                   >
                     <Plus className="w-3 h-3" />
@@ -1328,25 +1344,25 @@ const Sidebar = ({
       </div>
     </nav>
 
-    <div className="p-4 border-t border-slate-800">
+    <div className="p-4 border-t border-cyan-300/60 bg-white">
       {user ? (
         <>
           <div className="flex items-center gap-3 px-2 py-2.5 mb-2">
             {user.photoURL ? (
-              <img src={user.photoURL} alt="" referrerPolicy="no-referrer" className="w-8 h-8 rounded-full" />
+              <img src={user.photoURL} alt="" referrerPolicy="no-referrer" className="w-8 h-8 rounded-full border border-fuchsia-400" />
             ) : (
-              <div className="w-8 h-8 rounded-full bg-indigo-500 flex items-center justify-center text-white text-xs">
+              <div className="w-8 h-8 rounded-full bg-fuchsia-600 flex items-center justify-center text-white text-xs font-bold">
                 {user.email?.[0].toUpperCase()}
               </div>
             )}
             <div className="flex-1 min-w-0">
-              <p className="text-sm font-medium text-white truncate">{user.displayName || user.email}</p>
-              <p className="text-xs text-slate-500 truncate">Cloud Synced</p>
+              <p className="text-sm font-bold text-fuchsia-600 truncate">{user.displayName || user.email}</p>
+              <p className="text-xs text-cyan-600 truncate">Cloud Synced</p>
             </div>
           </div>
           <button 
             onClick={logout}
-            className="w-full flex items-center gap-3 px-4 py-2 rounded-lg hover:bg-slate-800 text-slate-400 hover:text-white transition-colors text-sm"
+            className="w-full flex items-center gap-3 px-4 py-2 rounded-lg hover:bg-rose-50 text-rose-600 font-semibold transition-colors text-sm"
           >
             <LogOut className="w-4 h-4 shrink-0" />
             Sign Out
@@ -1354,10 +1370,10 @@ const Sidebar = ({
         </>
       ) : (
         <div className="space-y-2">
-          <p className="px-2 text-xs text-slate-400">Local Studio Mode · Sign in to sync projects across devices.</p>
+          <p className="px-2 text-xs text-violet-700 font-medium">Modo Estudio Neón · Inicia sesión para sincronizar en la nube.</p>
           <button 
             onClick={onSignIn}
-            className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-medium transition-colors text-xs whitespace-nowrap"
+            className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-gradient-to-r from-fuchsia-600 via-violet-600 to-cyan-500 hover:from-fuchsia-500 hover:to-cyan-400 text-white font-bold transition-all text-xs whitespace-nowrap shadow-sm"
           >
             <LogIn className="w-4 h-4 shrink-0" />
             Sign in with Google
@@ -5675,6 +5691,8 @@ export default function App() {
         <Studio3DScene
           activeProject={activeStudioProject || videos[0] || null}
           initialSubject={active3DSubject}
+          generatedMusicTrack={activeMp3Track}
+          onMusicTrackGenerated={(track) => setActiveMp3Track(track)}
           onOpenDashboard={() => setActiveTab('dashboard')}
           onOpenCreate={() => setActiveTab('create')}
           onCreateVideoInScenario={(preset) =>
@@ -5738,7 +5756,7 @@ export default function App() {
   }
 
   return (
-    <div className="min-h-screen bg-[#07090e] text-[#f5d061] gold-theme-app flex">
+    <div className="min-h-screen bg-white text-violet-900 gold-theme-app flex">
       <Sidebar 
         activeTab={activeTab} 
         setActiveTab={setActiveTab} 
@@ -5902,27 +5920,27 @@ export default function App() {
           />
 
           {/* BANNER DE REGISTRO GRATIS PARA USAR MI NEGOCIO -> CADA REGISTRO DIRIGIDO A https://whop.com/@saulmente */}
-          <div className="mb-6 bg-gradient-to-r from-slate-950 via-emerald-950 to-slate-900 border-2 border-emerald-500/60 rounded-2xl p-5 text-white shadow-lg space-y-4">
+          <div className="mb-6 bg-white border-2 border-fuchsia-500 rounded-2xl p-5 text-violet-900 shadow-lg space-y-4">
             <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
               <div className="space-y-1">
-                <div className="inline-flex items-center gap-2 px-2.5 py-0.5 rounded-md bg-emerald-500/20 border border-emerald-400/40 text-emerald-300 text-[11px] font-mono font-bold">
-                  <Zap className="w-3.5 h-3.5 text-amber-300" />
+                <div className="inline-flex items-center gap-2 px-2.5 py-0.5 rounded-md bg-fuchsia-50 border border-fuchsia-400 text-fuchsia-600 text-[11px] font-mono font-bold">
+                  <Zap className="w-3.5 h-3.5 text-cyan-500" />
                   <span>ACCESO 100% GRATIS A MI NEGOCIO · DIRIGIDO A WHOP (@SAULMENTE)</span>
                 </div>
-                <h2 className="text-lg sm:text-xl font-extrabold text-white">
+                <h2 className="text-lg sm:text-xl font-extrabold text-fuchsia-600">
                   Regístrate Gratis para Usar Mi Negocio y Entra Directo a{' '}
                   <a
                     href={WHOP_TARGET_URL}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="text-emerald-400 underline hover:text-emerald-300"
+                    className="text-cyan-600 underline hover:text-fuchsia-600"
                   >
                     whop.com/@saulmente
                   </a>
                 </h2>
-                <p className="text-xs text-slate-300 max-w-3xl">
+                <p className="text-xs text-violet-700 font-medium max-w-3xl">
                   Completa tu registro rápido aquí abajo: cada registro activa el uso gratis de las herramientas de mi negocio y te dirige automáticamente a{' '}
-                  <span className="font-mono text-emerald-300">{WHOP_TARGET_URL}</span>.
+                  <span className="font-mono font-bold text-fuchsia-600">{WHOP_TARGET_URL}</span>.
                 </p>
               </div>
 
@@ -5931,15 +5949,15 @@ export default function App() {
                   href={WHOP_TARGET_URL}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="px-4 py-2.5 rounded-xl bg-white/10 hover:bg-white/20 border border-white/20 text-white text-xs font-bold flex items-center gap-1.5 whitespace-nowrap transition-colors"
+                  className="px-4 py-2.5 rounded-xl bg-white hover:bg-cyan-50 border-2 border-cyan-400 text-fuchsia-600 text-xs font-bold flex items-center gap-1.5 whitespace-nowrap transition-colors"
                 >
                   <span>Visitar https://whop.com/@saulmente</span>
-                  <ExternalLink className="w-3.5 h-3.5 text-emerald-400" />
+                  <ExternalLink className="w-3.5 h-3.5 text-cyan-500" />
                 </a>
                 <button
                   type="button"
                   onClick={() => setIsRegistrationModalOpen(true)}
-                  className="px-4 py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 text-xs font-extrabold flex items-center gap-1.5 whitespace-nowrap shadow-md transition-colors"
+                  className="px-4 py-2.5 rounded-xl bg-gradient-to-r from-fuchsia-600 via-violet-600 to-cyan-500 hover:from-fuchsia-500 hover:to-cyan-400 text-white text-xs font-extrabold flex items-center gap-1.5 whitespace-nowrap shadow-md transition-all"
                 >
                   <Zap className="w-4 h-4" />
                   <span>Ver Registros ({registrations.length}) / Formulario Completo</span>
@@ -5964,7 +5982,7 @@ export default function App() {
                 setInlineRegBusiness('');
                 setInlineRegPhone('');
               }}
-              className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-2.5 pt-2 border-t border-emerald-500/20"
+              className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-2.5 pt-2 border-t border-cyan-300"
             >
               <input
                 type="text"
@@ -5972,7 +5990,7 @@ export default function App() {
                 value={inlineRegName}
                 onChange={(e) => setInlineRegName(e.target.value)}
                 placeholder="Tu Nombre Completo *"
-                className="bg-slate-900/90 border border-slate-700 focus:border-emerald-400 rounded-xl px-3.5 py-2.5 text-xs text-white placeholder-slate-400 outline-none"
+                className="bg-white border-2 border-cyan-400 focus:border-fuchsia-500 rounded-xl px-3.5 py-2.5 text-xs text-violet-800 placeholder-fuchsia-400 outline-none"
               />
               <input
                 type="email"
@@ -5980,26 +5998,26 @@ export default function App() {
                 value={inlineRegEmail}
                 onChange={(e) => setInlineRegEmail(e.target.value)}
                 placeholder="Tu Correo Electrónico *"
-                className="bg-slate-900/90 border border-slate-700 focus:border-emerald-400 rounded-xl px-3.5 py-2.5 text-xs text-white placeholder-slate-400 outline-none"
+                className="bg-white border-2 border-cyan-400 focus:border-fuchsia-500 rounded-xl px-3.5 py-2.5 text-xs text-violet-800 placeholder-fuchsia-400 outline-none"
               />
               <input
                 type="text"
                 value={inlineRegBusiness}
                 onChange={(e) => setInlineRegBusiness(e.target.value)}
                 placeholder="Nombre de tu Negocio / Proyecto"
-                className="bg-slate-900/90 border border-slate-700 focus:border-emerald-400 rounded-xl px-3.5 py-2.5 text-xs text-white placeholder-slate-400 outline-none"
+                className="bg-white border-2 border-cyan-400 focus:border-fuchsia-500 rounded-xl px-3.5 py-2.5 text-xs text-violet-800 placeholder-fuchsia-400 outline-none"
               />
               <input
                 type="tel"
                 value={inlineRegPhone}
                 onChange={(e) => setInlineRegPhone(e.target.value)}
                 placeholder="WhatsApp / Teléfono (Opcional)"
-                className="bg-slate-900/90 border border-slate-700 focus:border-emerald-400 rounded-xl px-3.5 py-2.5 text-xs text-white placeholder-slate-400 outline-none"
+                className="bg-white border-2 border-cyan-400 focus:border-fuchsia-500 rounded-xl px-3.5 py-2.5 text-xs text-violet-800 placeholder-fuchsia-400 outline-none"
               />
               <button
                 type="submit"
                 disabled={isSubmittingRegistration}
-                className="py-2.5 px-4 rounded-xl bg-emerald-500 hover:bg-emerald-400 disabled:opacity-50 text-slate-950 font-extrabold text-xs flex items-center justify-center gap-1.5 shadow-md transition-all whitespace-nowrap"
+                className="py-2.5 px-4 rounded-xl bg-gradient-to-r from-fuchsia-600 via-violet-600 to-cyan-500 hover:from-fuchsia-500 hover:to-cyan-400 disabled:opacity-50 text-white font-extrabold text-xs flex items-center justify-center gap-1.5 shadow-md transition-all whitespace-nowrap"
               >
                 {isSubmittingRegistration ? (
                   <>
@@ -6017,19 +6035,19 @@ export default function App() {
             </form>
 
             {lastRegisteredEntry && (
-              <div className="p-3 rounded-xl bg-emerald-500/15 border border-emerald-400/50 flex flex-wrap items-center justify-between gap-3 text-xs">
-                <div className="flex items-center gap-2 text-emerald-200">
-                  <Check className="w-4 h-4 text-emerald-400 shrink-0" />
+              <div className="p-3 rounded-xl bg-cyan-50 border border-cyan-400 flex flex-wrap items-center justify-between gap-3 text-xs">
+                <div className="flex items-center gap-2 text-violet-800">
+                  <Check className="w-4 h-4 text-fuchsia-600 shrink-0" />
                   <span>
                     Registro activo: <strong>{lastRegisteredEntry.name}</strong> ({lastRegisteredEntry.businessName}) — dirigido a{' '}
-                    <span className="font-mono underline">{WHOP_TARGET_URL}</span>
+                    <span className="font-mono font-bold text-fuchsia-600 underline">{WHOP_TARGET_URL}</span>
                   </span>
                 </div>
                 <a
                   href={WHOP_TARGET_URL}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="px-3 py-1.5 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-extrabold text-xs flex items-center gap-1.5"
+                  className="px-3 py-1.5 rounded-lg bg-fuchsia-600 hover:bg-fuchsia-500 text-white font-extrabold text-xs flex items-center gap-1.5"
                 >
                   <span>Continuar a https://whop.com/@saulmente</span>
                   <ExternalLink className="w-3.5 h-3.5" />

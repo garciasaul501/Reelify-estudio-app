@@ -11,6 +11,8 @@ import {
   Folder,
   Layers,
   LayoutDashboard,
+  Loader2,
+  Music,
   Pause,
   Play,
   Plus,
@@ -21,10 +23,12 @@ import {
   Type as TypeIcon,
   Upload,
   Video,
+  Volume2,
   VolumeX
 } from 'lucide-react';
 
 export type SubjectPresetId = 'coupe' | 'sculpture' | 'drone' | 'station' | 'protein';
+export type ParticlePatternId = 'vortex' | 'fountain' | 'galaxy';
 
 export interface SceneItem {
   description: string;
@@ -37,15 +41,24 @@ export interface SceneItem {
 export interface StudioProjectContext {
   id?: string;
   title: string;
+  prompt?: string;
   folder?: string;
   scenes?: SceneItem[];
   videoData?: string;
   referenceImage?: string;
 }
 
+export interface GeneratedMusicTrack {
+  title: string;
+  audioUrl: string;
+  lyrics?: string;
+}
+
 interface Studio3DSceneProps {
   activeProject: StudioProjectContext | null;
   initialSubject?: SubjectPresetId;
+  generatedMusicTrack?: GeneratedMusicTrack | null;
+  onMusicTrackGenerated?: (track: GeneratedMusicTrack) => void;
   onOpenDashboard: () => void;
   onOpenCreate: () => void;
   onCreateVideoInScenario?: (preset: SubjectPresetId) => void;
@@ -86,41 +99,41 @@ const LIGHTING_PRESETS: Record<
   }
 > = {
   golden: {
-    label: 'Golden Studio',
-    bgHex: 0x0b0f19,
-    keyHex: 0xffe4b5,
+    label: 'Neon White',
+    bgHex: 0xffffff,
+    keyHex: 0x00e5ff,
     keyIntensity: 3.2,
-    hemiSkyHex: 0x93c5fd,
-    hemiGroundHex: 0x1e293b,
-    rimHex: 0xf59e0b,
-    rimIntensity: 2.6,
-  },
-  cyber: {
-    label: 'Stage Neon',
-    bgHex: 0x070913,
-    keyHex: 0x38bdf8,
-    keyIntensity: 3.0,
-    hemiSkyHex: 0x818cf8,
-    hemiGroundHex: 0x0f172a,
-    rimHex: 0xec4899,
+    hemiSkyHex: 0xffffff,
+    hemiGroundHex: 0xf8fafc,
+    rimHex: 0xff007f,
     rimIntensity: 3.4,
   },
+  cyber: {
+    label: 'Cyber Pink',
+    bgHex: 0xfdf4ff,
+    keyHex: 0xff007f,
+    keyIntensity: 3.1,
+    hemiSkyHex: 0xf0f9ff,
+    hemiGroundHex: 0xf8fafc,
+    rimHex: 0x00e5ff,
+    rimIntensity: 3.6,
+  },
   daylight: {
-    label: 'Clean Daylight',
-    bgHex: 0x111827,
+    label: 'Neon Cyan',
+    bgHex: 0xf8fafc,
     keyHex: 0xffffff,
     keyIntensity: 3.5,
     hemiSkyHex: 0xe0f2fe,
-    hemiGroundHex: 0x334155,
-    rimHex: 0x60a5fa,
-    rimIntensity: 2.2,
+    hemiGroundHex: 0xffffff,
+    rimHex: 0x7c3aed,
+    rimIntensity: 3.0,
   },
 };
 
 const FINISH_PRESETS: Record<FinishPresetId, { label: string; color: number; metalness: number; roughness: number; clearcoat: number }> = {
-  obsidian: { label: 'Obsidian Carbon', color: 0x1e293b, metalness: 0.85, roughness: 0.22, clearcoat: 0.9 },
-  titanium: { label: 'Brushed Titanium', color: 0xcbd5e1, metalness: 0.95, roughness: 0.18, clearcoat: 0.6 },
-  gold: { label: 'Anodized Amber', color: 0xf59e0b, metalness: 0.92, roughness: 0.2, clearcoat: 0.85 },
+  obsidian: { label: 'Neon Violet', color: 0x7c3aed, metalness: 0.78, roughness: 0.18, clearcoat: 0.95 },
+  titanium: { label: 'Neon Cyan', color: 0x00e5ff, metalness: 0.82, roughness: 0.16, clearcoat: 0.92 },
+  gold: { label: 'Neon Pink', color: 0xff007f, metalness: 0.85, roughness: 0.18, clearcoat: 0.95 },
 };
 
 // Procedural radial contact shadow texture
@@ -130,9 +143,9 @@ function createContactShadowTexture(): THREE.CanvasTexture {
   canvas.height = 256;
   const ctx = canvas.getContext('2d')!;
   const grad = ctx.createRadialGradient(128, 128, 12, 128, 128, 120);
-  grad.addColorStop(0, 'rgba(0, 0, 0, 0.75)');
-  grad.addColorStop(0.55, 'rgba(0, 0, 0, 0.32)');
-  grad.addColorStop(1, 'rgba(0, 0, 0, 0.0)');
+  grad.addColorStop(0, 'rgba(124, 58, 237, 0.32)');
+  grad.addColorStop(0.55, 'rgba(0, 229, 255, 0.14)');
+  grad.addColorStop(1, 'rgba(255, 255, 255, 0.0)');
   ctx.fillStyle = grad;
   ctx.fillRect(0, 0, 256, 256);
   const tex = new THREE.CanvasTexture(canvas);
@@ -140,17 +153,35 @@ function createContactShadowTexture(): THREE.CanvasTexture {
   return tex;
 }
 
-// Procedural studio floor calibration grid texture
+// Procedural soft glowing neon sprite texture for 3D audio-reactive particles
+function createNeonParticleSpriteTexture(): THREE.CanvasTexture {
+  const canvas = document.createElement('canvas');
+  canvas.width = 128;
+  canvas.height = 128;
+  const ctx = canvas.getContext('2d')!;
+  const grad = ctx.createRadialGradient(64, 64, 4, 64, 64, 60);
+  grad.addColorStop(0, 'rgba(255, 255, 255, 1.0)');
+  grad.addColorStop(0.28, 'rgba(255, 255, 255, 0.92)');
+  grad.addColorStop(0.62, 'rgba(255, 255, 255, 0.38)');
+  grad.addColorStop(1, 'rgba(255, 255, 255, 0.0)');
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, 128, 128);
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+
+// Procedural studio floor calibration grid texture (White Floor + Electric Neon Grid)
 function createStageFloorTexture(maxAnisotropy: number): THREE.CanvasTexture {
   const canvas = document.createElement('canvas');
   canvas.width = 1024;
   canvas.height = 1024;
   const ctx = canvas.getContext('2d')!;
 
-  ctx.fillStyle = '#0f172a';
+  ctx.fillStyle = '#ffffff';
   ctx.fillRect(0, 0, 1024, 1024);
 
-  ctx.strokeStyle = 'rgba(148, 163, 184, 0.14)';
+  ctx.strokeStyle = 'rgba(0, 229, 255, 0.38)';
   ctx.lineWidth = 2;
   const step = 64;
   for (let i = 0; i <= 1024; i += step) {
@@ -165,8 +196,8 @@ function createStageFloorTexture(maxAnisotropy: number): THREE.CanvasTexture {
     ctx.stroke();
   }
 
-  ctx.strokeStyle = 'rgba(99, 102, 241, 0.32)';
-  ctx.lineWidth = 3;
+  ctx.strokeStyle = 'rgba(255, 0, 127, 0.52)';
+  ctx.lineWidth = 3.5;
   [180, 320, 460].forEach((radius) => {
     ctx.beginPath();
     ctx.arc(512, 512, radius, 0, Math.PI * 2);
@@ -185,6 +216,8 @@ function createStageFloorTexture(maxAnisotropy: number): THREE.CanvasTexture {
 export default function Studio3DScene({
   activeProject,
   initialSubject = 'coupe',
+  generatedMusicTrack,
+  onMusicTrackGenerated,
   onOpenDashboard,
   onOpenCreate,
   onCreateVideoInScenario,
@@ -204,7 +237,7 @@ export default function Studio3DScene({
   const [isAutoMultiScene, setIsAutoMultiScene] = useState<boolean>(true);
   const [activeSceneIndex, setActiveSceneIndex] = useState<number>(0);
   const [isDockCollapsed, setIsDockCollapsed] = useState<boolean>(false);
-  const [inspectedPartName, setInspectedPartName] = useState<string>('Estudio 3D Imperial · Pantalla IMAX & Fondo Dinámico');
+  const [inspectedPartName, setInspectedPartName] = useState<string>('Estudio 3D Neón & Blanco · Partículas 3D Rítmicas Activas');
   const [localScenes, setLocalScenes] = useState<SceneItem[]>(() => activeProject?.scenes || []);
   const [uploaded3DVideoUrl, setUploaded3DVideoUrl] = useState<string | null>(() => activeProject?.videoData || null);
   const [uploaded3DVideoName, setUploaded3DVideoName] = useState<string>(
@@ -223,14 +256,36 @@ export default function Studio3DScene({
     () =>
       activeProject?.scenes?.[0]?.overlayText ||
       activeProject?.scenes?.[0]?.description ||
-      'EDICIÓN DE LUJO ORO 3D · PRODUCCIÓN EN ESCENARIO SIN VOZ'
+      'EDICIÓN NEÓN & BLANCO 3D · PRODUCCIÓN EN ESCENARIO SIN VOZ'
   );
   const [textFeedback, setTextFeedback] = useState<boolean>(false);
+
+  // 3D Music-Reactive Particle System State & Web Audio API Refs
+  const [particlesEnabled, setParticlesEnabled] = useState<boolean>(true);
+  const [particlePattern, setParticlePattern] = useState<ParticlePatternId>('vortex');
+  const [particleReactivity, setParticleReactivity] = useState<number>(1.35);
+  const [musicAudioUrl, setMusicAudioUrl] = useState<string | null>(() => generatedMusicTrack?.audioUrl || null);
+  const [musicTrackTitle, setMusicTrackTitle] = useState<string>(
+    () => generatedMusicTrack?.title || 'Pulso Rítmico Neón 3D (124 BPM)'
+  );
+  const [isMusicPlaying, setIsMusicPlaying] = useState<boolean>(false);
+  const [isGeneratingMusic, setIsGeneratingMusic] = useState<boolean>(false);
+  const [beatMeterUi, setBeatMeterUi] = useState<{ bass: number; mid: number; treble: number }>({
+    bass: 38,
+    mid: 45,
+    treble: 32,
+  });
 
   const videoElRef = useRef<HTMLVideoElement | null>(null);
   const threeVideoTexRef = useRef<THREE.VideoTexture | null>(null);
   const liveWebcamStreamRef = useRef<MediaStream | null>(null);
   const sceneImgElRef = useRef<HTMLImageElement | null>(null);
+
+  const musicAudioElRef = useRef<HTMLAudioElement | null>(null);
+  const audioCtxRef = useRef<AudioContext | null>(null);
+  const analyserRef = useRef<AnalyserNode | null>(null);
+  const mediaSourceRef = useRef<MediaElementAudioSourceNode | null>(null);
+  const freqDataRef = useRef<Uint8Array<ArrayBuffer> | null>(null);
 
   // Ensure scenarios never speak unwanted audio (Modo Silencio · Solo Texto)
   useEffect(() => {
@@ -256,6 +311,14 @@ export default function Studio3DScene({
     }
   }, [activeProject]);
 
+  // Sync when generatedMusicTrack prop changes from parent App
+  useEffect(() => {
+    if (generatedMusicTrack?.audioUrl) {
+      setMusicAudioUrl(generatedMusicTrack.audioUrl);
+      setMusicTrackTitle(generatedMusicTrack.title || 'Música Generada IA');
+    }
+  }, [generatedMusicTrack]);
+
   // Mutable refs for 60fps loop access without re-creating the WebGL context
   const stateRef = useRef({
     cameraPreset: 'director' as CameraPresetId,
@@ -270,7 +333,15 @@ export default function Studio3DScene({
     hasDynamicVideoBg: Boolean(activeProject?.videoData),
     videoBgMode: 'dome_and_wall' as 'dome_and_wall' | 'scene_backdrop' | 'led_wall',
     videoBgOpacity: 0.85,
-    projectTitle: activeProject?.title || 'Reelify 3D Gold Studio',
+    particlesEnabled: true,
+    particlePattern: 'vortex' as ParticlePatternId,
+    particleReactivity: 1.35,
+    isMusicPlaying: false,
+    bassEnergy: 0,
+    midEnergy: 0,
+    trebleEnergy: 0,
+    beatPulse: 0,
+    projectTitle: activeProject?.title || 'Reelify 3D Neon Studio',
     currentSceneText:
       activeProject?.scenes?.[0]?.overlayText ||
       activeProject?.scenes?.[0]?.description ||
@@ -285,6 +356,22 @@ export default function Studio3DScene({
   useEffect(() => {
     stateRef.current.explodedFactor = explodedFactor;
   }, [explodedFactor]);
+
+  useEffect(() => {
+    stateRef.current.particlesEnabled = particlesEnabled;
+  }, [particlesEnabled]);
+
+  useEffect(() => {
+    stateRef.current.particlePattern = particlePattern;
+  }, [particlePattern]);
+
+  useEffect(() => {
+    stateRef.current.particleReactivity = particleReactivity;
+  }, [particleReactivity]);
+
+  useEffect(() => {
+    stateRef.current.isMusicPlaying = isMusicPlaying;
+  }, [isMusicPlaying]);
 
   useEffect(() => {
     stateRef.current.videoBgMode = videoBgMode;
@@ -479,11 +566,145 @@ export default function Studio3DScene({
     }
   };
 
+  // Connect HTMLAudioElement to Web Audio API AnalyserNode for real-time 3D particle beat reactivity
+  const ensureAudioAnalyser = (audioEl: HTMLAudioElement) => {
+    try {
+      const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+      if (!AudioCtx) return;
+      if (!audioCtxRef.current) {
+        audioCtxRef.current = new AudioCtx();
+      }
+      if (audioCtxRef.current.state === 'suspended') {
+        audioCtxRef.current.resume().catch(() => {});
+      }
+      if (!analyserRef.current) {
+        const analyser = audioCtxRef.current.createAnalyser();
+        analyser.fftSize = 128;
+        analyser.smoothingTimeConstant = 0.78;
+        analyserRef.current = analyser;
+        freqDataRef.current = new Uint8Array(analyser.frequencyBinCount);
+      }
+      if (!mediaSourceRef.current && analyserRef.current) {
+        const src = audioCtxRef.current.createMediaElementSource(audioEl);
+        src.connect(analyserRef.current);
+        analyserRef.current.connect(audioCtxRef.current.destination);
+        mediaSourceRef.current = src;
+      }
+    } catch {
+      // Fallback to procedural harmonic rhythm if MediaElementSource already bound
+    }
+  };
+
+  const playMusicUrlIn3DStudio = async (url: string, titleLabel?: string) => {
+    setMusicAudioUrl(url);
+    if (titleLabel) setMusicTrackTitle(titleLabel);
+    setParticlesEnabled(true);
+    stateRef.current.particlesEnabled = true;
+
+    requestAnimationFrame(async () => {
+      const audioEl = musicAudioElRef.current;
+      if (!audioEl) return;
+      try {
+        audioEl.src = url;
+        audioEl.loop = true;
+        ensureAudioAnalyser(audioEl);
+        await audioEl.play();
+        setIsMusicPlaying(true);
+        stateRef.current.isMusicPlaying = true;
+        setInspectedPartName(`Partículas 3D Sincronizadas al Ritmo · ${titleLabel || musicTrackTitle}`);
+      } catch {
+        setIsMusicPlaying(true);
+        stateRef.current.isMusicPlaying = true;
+      }
+    });
+  };
+
+  // Generate AI Music via /api/ai/music and synchronize 3D particles to its rhythm
+  const handleGenerateAndPlayRhythmMusic = async () => {
+    if (isGeneratingMusic) return;
+    setIsGeneratingMusic(true);
+    setParticlesEnabled(true);
+    stateRef.current.particlesEnabled = true;
+    try {
+      const promptSeed =
+        activeProject?.prompt ||
+        activeProject?.title ||
+        scenarioTextInput ||
+        `Electronic synthwave neon cinema beat for ${subjectPreset} 3D showcase`;
+      const res = await fetch('/api/ai/music', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          prompt: `${promptSeed} — energetic rhythmic electronic bassline and crystal synth arpeggios`,
+          modelType: 'clip',
+        }),
+      });
+      const data = await res.json();
+      if (data.audioDataUrl) {
+        const newTitle = `Ritmo IA · ${(activeProject?.title || subjectPreset.toUpperCase()).slice(0, 28)}`;
+        const trackObj: GeneratedMusicTrack = {
+          title: newTitle,
+          audioUrl: data.audioDataUrl,
+          lyrics: data.lyrics,
+        };
+        if (onMusicTrackGenerated) {
+          onMusicTrackGenerated(trackObj);
+        }
+        await playMusicUrlIn3DStudio(data.audioDataUrl, newTitle);
+      }
+    } catch {
+      setIsMusicPlaying(true);
+      stateRef.current.isMusicPlaying = true;
+    } finally {
+      setIsGeneratingMusic(false);
+    }
+  };
+
+  const handleToggleMusicPlayback = async () => {
+    const audioEl = musicAudioElRef.current;
+    if (isMusicPlaying) {
+      audioEl?.pause();
+      setIsMusicPlaying(false);
+      stateRef.current.isMusicPlaying = false;
+      return;
+    }
+    if (musicAudioUrl && audioEl) {
+      try {
+        if (audioEl.src !== musicAudioUrl) {
+          audioEl.src = musicAudioUrl;
+        }
+        ensureAudioAnalyser(audioEl);
+        await audioEl.play();
+        setIsMusicPlaying(true);
+        stateRef.current.isMusicPlaying = true;
+        setParticlesEnabled(true);
+        return;
+      } catch {
+        // If playback blocked or no URL, generate fresh AI rhythm music
+      }
+    }
+    await handleGenerateAndPlayRhythmMusic();
+  };
+
+  const handleUploadMusicForParticles = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const objUrl = URL.createObjectURL(file);
+    playMusicUrlIn3DStudio(objUrl, file.name);
+    e.target.value = '';
+  };
+
   useEffect(() => {
     return () => {
       liveWebcamStreamRef.current?.getTracks().forEach((t) => t.stop());
       if (threeVideoTexRef.current) {
         threeVideoTexRef.current.dispose();
+      }
+      if (musicAudioElRef.current) {
+        musicAudioElRef.current.pause();
+      }
+      if (audioCtxRef.current && audioCtxRef.current.state !== 'closed') {
+        audioCtxRef.current.close().catch(() => {});
       }
     };
   }, []);
@@ -1354,6 +1575,94 @@ export default function Studio3DScene({
     trussInstanced.computeBoundingSphere();
     scene.add(trussInstanced);
 
+    // 8b. 3D Audio-Reactive Particle System (720 Orbital Neon Particles + 48-Bar 3D Circular Spectrum Ring)
+    const particleSpriteTex = createNeonParticleSpriteTexture();
+    const PARTICLE_COUNT = 720;
+    const particleGeo = new THREE.BufferGeometry();
+    const particlePositions = new Float32Array(PARTICLE_COUNT * 3);
+    const particleColors = new Float32Array(PARTICLE_COUNT * 3);
+    const particleBaseRadii = new Float32Array(PARTICLE_COUNT);
+    const particleBaseAngles = new Float32Array(PARTICLE_COUNT);
+    const particleBaseHeights = new Float32Array(PARTICLE_COUNT);
+    const particleSpeeds = new Float32Array(PARTICLE_COUNT);
+    const particleBands = new Uint8Array(PARTICLE_COUNT); // 0 = Bass, 1 = Mid, 2 = Treble
+
+    const neonPaletteHex = [0xff007f, 0x00e5ff, 0x7c3aed, 0xf59e0b];
+
+    for (let i = 0; i < PARTICLE_COUNT; i++) {
+      const band = i % 3; // 0: Bass, 1: Mid, 2: Treble
+      particleBands[i] = band;
+      const radius = 1.65 + (i / PARTICLE_COUNT) * 5.2 + (band === 0 ? -0.25 : band === 2 ? 0.45 : 0);
+      const angle = (i * 2.39996) % (Math.PI * 2); // Golden angle spiral distribution
+      const height = 0.25 + ((i * 17) % 100) / 100 * 3.8;
+
+      particleBaseRadii[i] = radius;
+      particleBaseAngles[i] = angle;
+      particleBaseHeights[i] = height;
+      particleSpeeds[i] = 0.35 + (band * 0.28) + ((i % 7) * 0.06);
+
+      particlePositions[i * 3] = Math.cos(angle) * radius;
+      particlePositions[i * 3 + 1] = height;
+      particlePositions[i * 3 + 2] = Math.sin(angle) * radius;
+
+      _scratchColor.setHex(neonPaletteHex[i % neonPaletteHex.length]);
+      particleColors[i * 3] = _scratchColor.r;
+      particleColors[i * 3 + 1] = _scratchColor.g;
+      particleColors[i * 3 + 2] = _scratchColor.b;
+    }
+
+    const posAttr = new THREE.BufferAttribute(particlePositions, 3);
+    posAttr.setUsage(THREE.DynamicDrawUsage);
+    const colAttr = new THREE.BufferAttribute(particleColors, 3);
+    colAttr.setUsage(THREE.DynamicDrawUsage);
+    particleGeo.setAttribute('position', posAttr);
+    particleGeo.setAttribute('color', colAttr);
+
+    const particleMat = new THREE.PointsMaterial({
+      size: 0.22,
+      map: particleSpriteTex,
+      vertexColors: true,
+      transparent: true,
+      opacity: 0.92,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+      sizeAttenuation: true,
+    });
+
+    const audioParticlePoints = new THREE.Points(particleGeo, particleMat);
+    audioParticlePoints.frustumCulled = false;
+    audioParticlePoints.userData.partName = 'Sistema de Partículas 3D Neón · Reactivo al Ritmo Musical';
+    scene.add(audioParticlePoints);
+
+    // 48-Pillar Circular 3D Equalizer Ring surrounding the Turntable Plinth
+    const EQ_BAR_COUNT = 48;
+    const eqBarGeo = new THREE.BoxGeometry(0.065, 1.0, 0.065);
+    eqBarGeo.translate(0, 0.5, 0); // Pivot at bottom-center so bars grow upward from stage floor
+    const eqBarMat = new THREE.MeshStandardMaterial({
+      color: 0xffffff,
+      emissive: 0xff007f,
+      emissiveIntensity: 1.6,
+      roughness: 0.2,
+      metalness: 0.7,
+    });
+    const eqRingInstanced = new THREE.InstancedMesh(eqBarGeo, eqBarMat, EQ_BAR_COUNT);
+    eqRingInstanced.frustumCulled = false;
+    eqRingInstanced.userData.partName = 'Anillo Ecualizador 3D · 48 Barras de Espectro Musical';
+    const eqRadius = 2.68;
+    for (let i = 0; i < EQ_BAR_COUNT; i++) {
+      const theta = (i / EQ_BAR_COUNT) * Math.PI * 2;
+      _dummyObj.position.set(Math.cos(theta) * eqRadius, 0.16, Math.sin(theta) * eqRadius);
+      _dummyObj.rotation.set(0, -theta, 0);
+      _dummyObj.scale.set(1, 0.15, 1);
+      _dummyObj.updateMatrix();
+      eqRingInstanced.setMatrixAt(i, _dummyObj.matrix);
+      _scratchColor.setHex(i % 2 === 0 ? 0x00e5ff : 0xff007f);
+      eqRingInstanced.setColorAt(i, _scratchColor);
+    }
+    eqRingInstanced.instanceMatrix.needsUpdate = true;
+    if (eqRingInstanced.instanceColor) eqRingInstanced.instanceColor.needsUpdate = true;
+    turntableGroup.add(eqRingInstanced);
+
     // 9. Throttled Raycasting
     const raycaster = new THREE.Raycaster();
     const pointer = new THREE.Vector2();
@@ -1434,9 +1743,9 @@ export default function Studio3DScene({
       const h = ledCanvas.height;
 
       const grad = ledCtx.createLinearGradient(0, 0, w, h);
-      grad.addColorStop(0, '#07090e');
-      grad.addColorStop(0.5, '#191408');
-      grad.addColorStop(1, '#090c14');
+      grad.addColorStop(0, '#ffffff');
+      grad.addColorStop(0.5, '#f0f9ff');
+      grad.addColorStop(1, '#fdf4ff');
       ledCtx.fillStyle = grad;
       ledCtx.fillRect(0, 0, w, h);
 
@@ -1457,7 +1766,7 @@ export default function Studio3DScene({
         const dh = h * zoom;
         ledCtx.drawImage(imgEl, (w - dw) / 2, (h - dh) / 2, dw, dh);
       } else {
-        ledCtx.strokeStyle = 'rgba(212, 175, 55, 0.24)';
+        ledCtx.strokeStyle = 'rgba(0, 229, 255, 0.45)';
         ledCtx.lineWidth = 2;
         for (let x = 0; x <= w; x += 64) {
           ledCtx.beginPath();
@@ -1473,28 +1782,50 @@ export default function Studio3DScene({
         }
       }
 
-      // Luxury Obsidian & Gold Cinema Lower-Third Bar
-      ledCtx.fillStyle = 'rgba(7, 9, 14, 0.90)';
+      // Crisp White & Electric Neon Lower-Third Bar + Real-Time Audio Spectrum Overlay
+      ledCtx.fillStyle = 'rgba(255, 255, 255, 0.94)';
       ledCtx.fillRect(0, h - 104, w, 104);
-      ledCtx.strokeStyle = 'rgba(245, 208, 97, 0.55)';
-      ledCtx.lineWidth = 2;
+      ledCtx.strokeStyle = '#ff007f';
+      ledCtx.lineWidth = 3;
       ledCtx.beginPath();
       ledCtx.moveTo(0, h - 104);
       ledCtx.lineTo(w, h - 104);
       ledCtx.stroke();
 
-      ledCtx.fillStyle = '#fbbf24';
+      // Draw 20 mini neon equalizer bars on the right side of the IMAX LED lower-third
+      const st = stateRef.current;
+      if (st.particlesEnabled) {
+        const barCount = 20;
+        const startX = w - 250;
+        const baseLineY = h - 18;
+        for (let b = 0; b < barCount; b++) {
+          const ratio = b / barCount;
+          const bandVal =
+            ratio < 0.33
+              ? st.bassEnergy
+              : ratio < 0.66
+              ? st.midEnergy
+              : st.trebleEnergy;
+          const wave = 0.25 + 0.75 * Math.abs(Math.sin(elapsed * 6.5 + b * 0.55));
+          const barH = Math.max(6, Math.min(72, (bandVal * 0.75 + wave * 0.25) * 72));
+          ledCtx.fillStyle = b % 2 === 0 ? '#ff007f' : '#00e5ff';
+          ledCtx.fillRect(startX + b * 11, baseLineY - barH, 7, barH);
+        }
+      }
+
+      ledCtx.fillStyle = '#00b8d4';
       ledCtx.font = 'bold 16px "JetBrains Mono", monospace';
       const bgVideoTag = stateRef.current.hasDynamicVideoBg ? ' · FONDO DE VIDEO 3D ACTIVO' : '';
+      const musicTag = stateRef.current.isMusicPlaying ? ' · MÚSICA & PARTÍCULAS 3D EN VIVO' : ' · PARTÍCULAS 3D ACTIVAS';
       ledCtx.fillText(
-        `ESTUDIO 3D ORO IMPERIAL · ESCENA 0${stateRef.current.activeSceneIndex + 1} · ${stateRef.current.projectTitle.toUpperCase()}${bgVideoTag}`,
+        `ESTUDIO 3D NEÓN & BLANCO · ESCENA 0${stateRef.current.activeSceneIndex + 1}${bgVideoTag}${musicTag}`,
         36,
         h - 64
       );
-      ledCtx.fillStyle = '#fde047';
-      ledCtx.font = 'bold 24px "Cinzel", Georgia, serif';
+      ledCtx.fillStyle = '#ff007f';
+      ledCtx.font = 'bold 24px "Plus Jakarta Sans", sans-serif';
       const desc = stateRef.current.currentSceneText || '';
-      ledCtx.fillText(desc.length > 68 ? `${desc.slice(0, 68)}...` : desc, 36, h - 24);
+      ledCtx.fillText(desc.length > 56 ? `${desc.slice(0, 56)}...` : desc, 36, h - 24);
 
       ledCanvasTex.needsUpdate = true;
     }
@@ -1519,8 +1850,13 @@ export default function Studio3DScene({
       frameId = window.setTimeout(poll, 5);
     }
 
+    let smoothedBass = 0.25;
+    let smoothedMid = 0.22;
+    let smoothedTreble = 0.18;
+
     function tick() {
       const delta = Math.min(clock.getDelta(), 0.1);
+      const elapsed = clock.elapsedTime;
       const st = stateRef.current;
 
       coupeGroup.visible = st.subjectPreset === 'coupe';
@@ -1529,9 +1865,184 @@ export default function Studio3DScene({
       stationGroup.visible = st.subjectPreset === 'station';
       proteinGroup.visible = st.subjectPreset === 'protein';
 
+      // --- REAL-TIME MUSIC RHYTHM & FFT SPECTRUM EXTRACTION ---
+      let rawBass = 0;
+      let rawMid = 0;
+      let rawTreble = 0;
+      const analyser = analyserRef.current;
+      const freqBins = freqDataRef.current;
+      const audioEl = musicAudioElRef.current;
+      const hasLiveAudioSignal = Boolean(
+        st.isMusicPlaying && analyser && freqBins && audioEl && !audioEl.paused
+      );
+
+      if (hasLiveAudioSignal && analyser && freqBins) {
+        analyser.getByteFrequencyData(freqBins);
+        const binCount = freqBins.length; // 64 bins for fftSize=128
+        let bSum = 0;
+        const bEnd = Math.max(1, Math.floor(binCount * 0.18));
+        for (let i = 0; i < bEnd; i++) bSum += freqBins[i];
+        rawBass = bSum / (bEnd * 255);
+
+        let mSum = 0;
+        const mEnd = Math.max(bEnd + 1, Math.floor(binCount * 0.55));
+        for (let i = bEnd; i < mEnd; i++) mSum += freqBins[i];
+        rawMid = mSum / ((mEnd - bEnd) * 255);
+
+        let tSum = 0;
+        for (let i = mEnd; i < binCount; i++) tSum += freqBins[i];
+        rawTreble = tSum / (Math.max(1, binCount - mEnd) * 255);
+      }
+
+      // Blend with procedural 124-BPM studio synth beat when playing or if audio element is warming up
+      if (st.isPlaying || st.isMusicPlaying) {
+        const bpmFreq = (124 / 60) * Math.PI * 2;
+        const kickWave = Math.pow(Math.max(0, Math.sin(elapsed * bpmFreq)), 4);
+        const snareWave = Math.pow(Math.max(0, Math.sin(elapsed * bpmFreq * 0.5 + Math.PI * 0.5)), 6);
+        const arpWave = 0.5 + 0.5 * Math.sin(elapsed * bpmFreq * 2.0 + Math.cos(elapsed * 3.2));
+
+        const synthScale = st.isMusicPlaying ? 0.65 : 0.42;
+        rawBass = Math.max(rawBass, kickWave * synthScale);
+        rawMid = Math.max(rawMid, (0.35 * kickWave + 0.65 * snareWave) * synthScale);
+        rawTreble = Math.max(rawTreble, arpWave * synthScale);
+      }
+
+      const reactivity = st.particleReactivity;
+      smoothedBass = THREE.MathUtils.damp(smoothedBass, Math.min(1.4, rawBass * reactivity), 14, delta);
+      smoothedMid = THREE.MathUtils.damp(smoothedMid, Math.min(1.4, rawMid * reactivity), 12, delta);
+      smoothedTreble = THREE.MathUtils.damp(smoothedTreble, Math.min(1.4, rawTreble * reactivity), 16, delta);
+      const beatPulse = Math.min(1.5, smoothedBass * 0.55 + smoothedMid * 0.3 + smoothedTreble * 0.15);
+
+      st.bassEnergy = smoothedBass;
+      st.midEnergy = smoothedMid;
+      st.trebleEnergy = smoothedTreble;
+      st.beatPulse = beatPulse;
+
+      // Update UI Beat Meter every ~6 frames to avoid excess React re-renders
+      if (ledFrameCounter % 6 === 0 && st.particlesEnabled) {
+        setBeatMeterUi({
+          bass: Math.min(100, Math.round(smoothedBass * 85)),
+          mid: Math.min(100, Math.round(smoothedMid * 85)),
+          treble: Math.min(100, Math.round(smoothedTreble * 85)),
+        });
+      }
+
+      // --- UPDATE 3D AUDIO-REACTIVE PARTICLES & 48-PILLAR EQUALIZER RING ---
+      audioParticlePoints.visible = st.particlesEnabled;
+      eqRingInstanced.visible = st.particlesEnabled;
+
+      if (st.particlesEnabled) {
+        // Pulse particle size and turntable neon ring to the bass beat
+        particleMat.size = 0.17 + smoothedBass * 0.18 + smoothedTreble * 0.06;
+        emissiveCyanMat.emissiveIntensity = 1.8 + beatPulse * 2.4;
+        eqBarMat.emissiveIntensity = 1.2 + smoothedBass * 2.2;
+
+        const positionsArr = posAttr.array as Float32Array;
+        const colorsArr = colAttr.array as Float32Array;
+        const pattern = st.particlePattern;
+
+        for (let i = 0; i < PARTICLE_COUNT; i++) {
+          const band = particleBands[i];
+          const bandEnergy = band === 0 ? smoothedBass : band === 1 ? smoothedMid : smoothedTreble;
+          const speed = particleSpeeds[i] * (1 + bandEnergy * 1.6);
+          const baseR = particleBaseRadii[i];
+          const baseH = particleBaseHeights[i];
+          const phase = particleBaseAngles[i] + elapsed * speed * (st.isPlaying || st.isMusicPlaying ? 1 : 0.15);
+
+          let px = 0;
+          let py = 0;
+          let pz = 0;
+
+          if (pattern === 'vortex') {
+            // Spiral Neon Vortex: Bass expands radius, Mid creates vertical harmonic waves
+            const r = baseR + smoothedBass * 0.95 * Math.sin(phase * 2 + i * 0.1);
+            px = Math.cos(phase) * r;
+            pz = Math.sin(phase) * r;
+            py =
+              baseH +
+              Math.sin(elapsed * 3.4 + baseR * 1.5) * (0.22 + smoothedMid * 0.85) +
+              (band === 0 ? smoothedBass * 0.55 : 0);
+          } else if (pattern === 'fountain') {
+            // Rhythmic 3D Fountain Jets: Particles launch upward from the stage plinth on beat hits
+            const cycle = ((elapsed * (0.45 + bandEnergy * 0.55) + i / PARTICLE_COUNT) % 1);
+            const jetR = 0.9 + cycle * (baseR * 0.85) + smoothedBass * 0.45;
+            const archY = Math.sin(cycle * Math.PI) * (1.8 + bandEnergy * 2.8) + 0.2;
+            px = Math.cos(phase * 0.8) * jetR;
+            pz = Math.sin(phase * 0.8) * jetR;
+            py = archY;
+          } else {
+            // Acoustic 3-Arm Spiral Galaxy
+            const armAngle = phase + (i % 3) * ((Math.PI * 2) / 3) + baseR * 0.45;
+            const galR = baseR * (0.85 + smoothedBass * 0.35);
+            px = Math.cos(armAngle) * galR;
+            pz = Math.sin(armAngle) * galR;
+            py =
+              1.45 +
+              Math.cos(baseR * 2.0 - elapsed * 4.0) * (0.28 + smoothedMid * 0.95) +
+              Math.sin(armAngle * 3) * smoothedTreble * 0.45;
+          }
+
+          positionsArr[i * 3] = px;
+          positionsArr[i * 3 + 1] = Math.max(0.08, py);
+          positionsArr[i * 3 + 2] = pz;
+
+          // Dynamic neon color shift on high/bass energy peaks
+          if (band === 0) {
+            // Neon Pink -> Electric Gold on heavy bass
+            colorsArr[i * 3] = 1.0;
+            colorsArr[i * 3 + 1] = Math.min(1, 0.08 + smoothedBass * 0.65);
+            colorsArr[i * 3 + 2] = Math.max(0.2, 0.55 - smoothedBass * 0.25);
+          } else if (band === 1) {
+            // Neon Cyan -> Electric White-Cyan on mid peaks
+            colorsArr[i * 3] = Math.min(1, smoothedMid * 0.55);
+            colorsArr[i * 3 + 1] = 0.9;
+            colorsArr[i * 3 + 2] = 1.0;
+          } else {
+            // Neon Violet -> Electric Magenta on treble shimmer
+            colorsArr[i * 3] = Math.min(1, 0.52 + smoothedTreble * 0.48);
+            colorsArr[i * 3 + 1] = Math.min(1, 0.22 + smoothedTreble * 0.35);
+            colorsArr[i * 3 + 2] = 0.96;
+          }
+        }
+        posAttr.needsUpdate = true;
+        colAttr.needsUpdate = true;
+
+        // Update 48-Pillar Circular 3D Equalizer Ring around the Turntable
+        for (let i = 0; i < EQ_BAR_COUNT; i++) {
+          const theta = (i / EQ_BAR_COUNT) * Math.PI * 2 + elapsed * 0.25;
+          let binVal = 0;
+          if (hasLiveAudioSignal && freqBins) {
+            const binIdx = i % Math.min(48, freqBins.length);
+            binVal = (freqBins[binIdx] / 255) * reactivity;
+          } else {
+            const symIdx = Math.abs((i % 24) - 12) / 12;
+            const waveVal = Math.abs(Math.sin(elapsed * 5.2 + i * 0.38));
+            binVal = (1 - symIdx) * smoothedBass * 0.8 + symIdx * smoothedTreble * 0.6 + waveVal * smoothedMid * 0.45;
+          }
+          const barScaleY = Math.max(0.08, Math.min(1.85, 0.1 + binVal * 1.15));
+          _dummyObj.position.set(Math.cos(theta) * eqRadius, 0.16, Math.sin(theta) * eqRadius);
+          _dummyObj.rotation.set(0, -theta, 0);
+          _dummyObj.scale.set(1 + smoothedBass * 0.35, barScaleY, 1 + smoothedBass * 0.35);
+          _dummyObj.updateMatrix();
+          eqRingInstanced.setMatrixAt(i, _dummyObj.matrix);
+
+          // Shift bar color between Neon Cyan, Neon Violet, and Neon Pink by amplitude
+          if (barScaleY > 0.85) {
+            _scratchColor.setHex(0xff007f);
+          } else if (barScaleY > 0.42) {
+            _scratchColor.setHex(0x7c3aed);
+          } else {
+            _scratchColor.setHex(0x00e5ff);
+          }
+          eqRingInstanced.setColorAt(i, _scratchColor);
+        }
+        eqRingInstanced.instanceMatrix.needsUpdate = true;
+        if (eqRingInstanced.instanceColor) eqRingInstanced.instanceColor.needsUpdate = true;
+      }
+
       ledFrameCounter++;
       if (ledFrameCounter % 2 === 0) {
-        updateLedVolumeTexture(clock.elapsedTime);
+        updateLedVolumeTexture(elapsed);
       }
 
       // Dynamic 3D Video Background Binding (Sky-Dome 360°, Direct Scene Backdrop, or LED Wall)
@@ -1579,7 +2090,7 @@ export default function Studio3DScene({
       }
       if (scene.fog instanceof THREE.FogExp2) {
         scene.fog.color.lerp(_scratchColor, 1 - Math.exp(-5 * delta));
-        scene.fog.density = isVideoReady && st.videoBgMode !== 'led_wall' ? 0.006 : 0.022;
+        scene.fog.density = isVideoReady && st.videoBgMode !== 'led_wall' ? 0.004 : 0.012;
       }
       _scratchColor.setHex(lp.keyHex);
       keyLight.color.lerp(_scratchColor, 1 - Math.exp(-6 * delta));
@@ -1668,6 +2179,11 @@ export default function Studio3DScene({
       controls.dispose();
       floorTex.dispose();
       contactShadowTex.dispose();
+      particleSpriteTex.dispose();
+      particleGeo.dispose();
+      particleMat.dispose();
+      eqBarGeo.dispose();
+      eqBarMat.dispose();
       ledCanvasTex.dispose();
       videoSkyDomeGeo.dispose();
       videoSkyDomeMat.dispose();
@@ -1684,48 +2200,67 @@ export default function Studio3DScene({
       }}
       onDragLeave={() => setIsDraggingVideoOver3D(false)}
       onDrop={handleDropVideoOn3DStage}
-      className="relative w-screen h-screen overflow-hidden bg-[#07090e] text-[#f5d061] select-none"
+      className="relative w-screen h-screen overflow-hidden bg-white text-fuchsia-600 select-none"
     >
+      {/* Hidden Audio Element for AI Generated Music & Web Audio API Beat Analyzer */}
+      <audio
+        ref={musicAudioElRef}
+        crossOrigin="anonymous"
+        onPlay={() => {
+          setIsMusicPlaying(true);
+          stateRef.current.isMusicPlaying = true;
+        }}
+        onPause={() => {
+          setIsMusicPlaying(false);
+          stateRef.current.isMusicPlaying = false;
+        }}
+        onEnded={() => {
+          setIsMusicPlaying(false);
+          stateRef.current.isMusicPlaying = false;
+        }}
+        className="hidden"
+      />
+
       {/* Dedicated WebGL Mount Container (Outside React HUD overlays) */}
       <div ref={canvasMountRef} className="absolute inset-0 w-full h-full" />
 
       {/* Drag & Drop Video Overlay */}
       {isDraggingVideoOver3D && (
         <div
-          style={{ backgroundColor: 'rgba(7, 9, 14, 0.85)' }}
-          className="absolute inset-4 z-30 rounded-2xl border-2 border-dashed border-amber-400 flex flex-col items-center justify-center gap-3 pointer-events-none"
+          style={{ backgroundColor: 'rgba(255, 255, 255, 0.92)' }}
+          className="absolute inset-4 z-30 rounded-2xl border-2 border-dashed border-fuchsia-500 flex flex-col items-center justify-center gap-3 pointer-events-none shadow-2xl"
         >
-          <Upload className="w-12 h-12 text-amber-300" />
-          <p className="text-xl font-bold text-amber-200 font-display-gold">
+          <Upload className="w-12 h-12 text-fuchsia-600" />
+          <p className="text-xl font-bold text-fuchsia-600 font-display-gold">
             Suelta tu archivo de video aquí para usarlo como Fondo Dinámico del Estudio 3D
           </p>
-          <p className="text-xs text-amber-400/90">
+          <p className="text-xs text-cyan-600 font-semibold">
             Compatible con MP4, WebM y MOV · Proyección en Domo 360° + Pantalla Curva IMAX 3D
           </p>
         </div>
       )}
 
-      {/* Top Bar Contract: Luxury Obsidian & Gold 3 Zones */}
+      {/* Top Bar Contract: White Background & Electric Neon 3 Zones */}
       <header
-        style={{ backgroundColor: 'rgba(9, 12, 20, 0.94)' }}
-        className="absolute top-4 left-6 right-6 z-10 flex items-center justify-between gap-4 px-5 py-3 rounded-xl border border-amber-500/35 text-amber-200 pointer-events-auto shadow-2xl"
+        style={{ backgroundColor: 'rgba(255, 255, 255, 0.95)' }}
+        className="absolute top-4 left-6 right-6 z-10 flex items-center justify-between gap-4 px-5 py-3 rounded-xl border-2 border-cyan-400 text-fuchsia-600 pointer-events-auto shadow-xl"
       >
         {/* Zone 1: Brand Wordmark */}
         <div className="flex items-center gap-2.5 whitespace-nowrap shrink-0">
-          <Video className="w-5 h-5 text-amber-400" />
-          <span className="text-base font-extrabold tracking-wider text-amber-300 font-display-gold">
+          <Video className="w-5 h-5 text-fuchsia-600" />
+          <span className="text-base font-extrabold tracking-wider text-fuchsia-600 font-display-gold">
             Reelify Video AI
           </span>
-          <span className="text-xs text-amber-500/60">·</span>
-          <span className="text-xs text-amber-200/90 font-medium truncate max-w-52">{inspectedPartName}</span>
+          <span className="text-xs text-cyan-500">·</span>
+          <span className="text-xs text-violet-700 font-semibold truncate max-w-52">{inspectedPartName}</span>
         </div>
 
         {/* Zone 2: Multi-Scene Sequence Switcher */}
-        <div className="hidden lg:flex items-center gap-2 text-xs text-amber-200 min-w-0 overflow-x-auto">
+        <div className="hidden lg:flex items-center gap-2 text-xs text-violet-700 min-w-0 overflow-x-auto">
           {activeProject ? (
             <div className="flex items-center gap-2 truncate">
-              <Folder className="w-3.5 h-3.5 text-amber-400 shrink-0" />
-              <span className="font-semibold text-amber-200 truncate max-w-40">{activeProject.title}</span>
+              <Folder className="w-3.5 h-3.5 text-fuchsia-600 shrink-0" />
+              <span className="font-bold text-fuchsia-600 truncate max-w-40">{activeProject.title}</span>
               {localScenes.length > 0 && (
                 <div className="flex items-center gap-1 ml-1">
                   {localScenes.map((sc, idx) => (
@@ -1738,8 +2273,8 @@ export default function Studio3DScene({
                       }}
                       className={`px-2 py-0.5 rounded text-xs font-mono tabular-nums transition-colors ${
                         activeSceneIndex === idx
-                          ? 'bg-amber-500 text-slate-950 font-bold'
-                          : 'bg-slate-900 text-amber-300/80 border border-amber-500/25 hover:text-amber-200'
+                          ? 'bg-fuchsia-600 text-white font-bold shadow-xs'
+                          : 'bg-white text-cyan-700 border border-cyan-400 hover:bg-cyan-50'
                       }`}
                       title={sc.description}
                     >
@@ -1753,8 +2288,8 @@ export default function Studio3DScene({
                   onClick={() => setIsAutoMultiScene((prev) => !prev)}
                   className={`px-2.5 py-0.5 rounded text-xs font-semibold transition-colors ${
                     isAutoMultiScene
-                      ? 'bg-amber-500/20 text-amber-200 border border-amber-400/50'
-                      : 'bg-slate-900 text-amber-400/60 border border-amber-500/20'
+                      ? 'bg-cyan-500 text-white font-bold'
+                      : 'bg-white text-violet-700 border border-cyan-400'
                   }`}
                 >
                   {isAutoMultiScene ? 'Auto Multi-Escena: ON' : 'Auto Multi-Escena: OFF'}
@@ -1762,20 +2297,35 @@ export default function Studio3DScene({
               )}
             </div>
           ) : (
-            <span className="text-amber-300/90">
-              Estudio 3D con Fondo de Video Dinámico · Sube un video MP4/WebM o arrástralo a la escena
+            <span className="text-cyan-700 font-semibold">
+              Estudio 3D Fondo Blanco & Neón · Partículas 3D Rítmicas + Fondo Dinámico
             </span>
           )}
         </div>
 
-        {/* Zone 3: Upload Dynamic Video Background, Camera, Snapshot, Save & Navigation */}
+        {/* Zone 3: AI Music Rhythm Generator, Upload Dynamic Video Background, Camera, Snapshot, Save & Navigation */}
         <div className="flex items-center gap-2 shrink-0">
+          <button
+            type="button"
+            disabled={isGeneratingMusic}
+            onClick={handleGenerateAndPlayRhythmMusic}
+            className="px-3 py-1.5 text-xs font-extrabold text-white bg-gradient-to-r from-fuchsia-600 via-violet-600 to-cyan-500 hover:from-fuchsia-500 hover:to-cyan-400 rounded-lg transition-all flex items-center gap-1.5 whitespace-nowrap shrink-0 shadow-md disabled:opacity-60"
+            title="Generar música con IA (Lyria) y hacer que las partículas 3D reaccionen al ritmo automáticamente"
+          >
+            {isGeneratingMusic ? (
+              <Loader2 className="w-3.5 h-3.5 text-white animate-spin" />
+            ) : (
+              <Music className="w-3.5 h-3.5 text-white" />
+            )}
+            <span>{isGeneratingMusic ? 'Generando Ritmo IA...' : 'Música IA · Partículas 3D'}</span>
+          </button>
+
           <label
-            className="cursor-pointer px-3.5 py-1.5 text-xs font-bold text-slate-950 bg-gradient-to-r from-amber-300 via-amber-400 to-yellow-500 hover:from-amber-200 hover:to-amber-400 rounded-lg transition-all flex items-center gap-1.5 whitespace-nowrap shrink-0 shadow-md"
+            className="cursor-pointer px-3 py-1.5 text-xs font-bold text-fuchsia-600 bg-white hover:bg-fuchsia-50 border border-fuchsia-400 rounded-lg transition-all flex items-center gap-1.5 whitespace-nowrap shrink-0"
             title="Subir un archivo de video (.mp4, .webm, .mov) para usarlo como fondo dinámico del estudio 3D"
           >
-            <Upload className="w-3.5 h-3.5 text-slate-950" />
-            <span>{uploaded3DVideoUrl ? 'Cambiar Video de Fondo 3D' : 'Subir Video de Fondo 3D'}</span>
+            <Upload className="w-3.5 h-3.5 text-fuchsia-600" />
+            <span>{uploaded3DVideoUrl ? 'Cambiar Video 3D' : 'Video Fondo 3D'}</span>
             <input type="file" accept="video/*,.mp4,.webm,.mov" onChange={handleUploadVideoTo3D} className="hidden" />
           </label>
 
@@ -1783,40 +2333,40 @@ export default function Studio3DScene({
             onClick={handleToggleLiveWebcamOn3DWall}
             className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors flex items-center gap-1.5 whitespace-nowrap shrink-0 border ${
               isLiveWebcamOnWall
-                ? 'bg-rose-600 text-amber-100 border-rose-400'
-                : 'text-amber-200 bg-slate-900 hover:bg-slate-800 border-amber-500/35'
+                ? 'bg-fuchsia-600 text-white border-fuchsia-400'
+                : 'text-fuchsia-600 bg-white hover:bg-fuchsia-50 border-fuchsia-400'
             }`}
             title="Proyectar cámara de tu dispositivo en vivo como fondo dinámico 3D"
           >
-            <Camera className="w-3.5 h-3.5 text-amber-400" />
+            <Camera className="w-3.5 h-3.5 text-fuchsia-600" />
             {isLiveWebcamOnWall ? 'Detener Cámara 3D' : 'Cámara en 3D'}
           </button>
 
           {isLiveWebcamOnWall && (
             <button
               onClick={handleFlipWebcamOn3DWall}
-              className="px-2.5 py-1.5 text-xs font-semibold text-amber-200 bg-slate-900 hover:bg-slate-800 border border-amber-500/35 rounded-lg transition-colors flex items-center gap-1.5 whitespace-nowrap shrink-0"
+              className="px-2.5 py-1.5 text-xs font-semibold text-cyan-700 bg-white hover:bg-cyan-50 border border-cyan-400 rounded-lg transition-colors flex items-center gap-1.5 whitespace-nowrap shrink-0"
               title="Voltear cámara frontal/trasera en la pantalla 3D"
             >
-              <SwitchCamera className="w-3.5 h-3.5 text-amber-400" />
+              <SwitchCamera className="w-3.5 h-3.5 text-cyan-600" />
               Voltear
             </button>
           )}
 
           <button
             onClick={handleTake3DSnapshot}
-            className="px-3 py-1.5 text-xs font-semibold text-amber-200 bg-slate-900 hover:bg-slate-800 border border-amber-500/35 rounded-lg transition-colors flex items-center gap-1.5 whitespace-nowrap shrink-0"
+            className="px-3 py-1.5 text-xs font-semibold text-violet-700 bg-white hover:bg-violet-50 border border-violet-400 rounded-lg transition-colors flex items-center gap-1.5 whitespace-nowrap shrink-0"
             title="Capturar foto del escenario 3D actual y agregarla como escena"
           >
-            {snapshotFeedback ? <Check className="w-3.5 h-3.5 text-amber-300" /> : <Camera className="w-3.5 h-3.5 text-amber-400" />}
+            {snapshotFeedback ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Camera className="w-3.5 h-3.5 text-violet-600" />}
             {snapshotFeedback ? '¡Foto 3D Guardada!' : 'Foto 3D'}
           </button>
 
           <button
             onClick={handleSave3DConfig}
-            className="px-3 py-1.5 text-xs font-semibold text-amber-200 bg-slate-900 hover:bg-slate-800 border border-amber-500/35 rounded-lg transition-colors flex items-center gap-1.5 whitespace-nowrap shrink-0"
+            className="px-3 py-1.5 text-xs font-semibold text-cyan-700 bg-white hover:bg-cyan-50 border border-cyan-400 rounded-lg transition-colors flex items-center gap-1.5 whitespace-nowrap shrink-0"
           >
-            {saveFeedback ? <Check className="w-3.5 h-3.5 text-amber-300" /> : <Save className="w-3.5 h-3.5 text-amber-400" />}
+            {saveFeedback ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Save className="w-3.5 h-3.5 text-cyan-600" />}
             {saveFeedback ? 'Guardado' : 'Guardar 3D'}
           </button>
 
@@ -1828,40 +2378,40 @@ export default function Studio3DScene({
                 onOpenCreate();
               }
             }}
-            className="px-3 py-1.5 text-xs font-bold text-amber-200 bg-amber-500/20 hover:bg-amber-500/30 border border-amber-400/50 rounded-lg transition-colors flex items-center gap-1.5 whitespace-nowrap shrink-0"
+            className="px-3 py-1.5 text-xs font-bold text-white bg-fuchsia-600 hover:bg-fuchsia-500 border border-fuchsia-400 rounded-lg transition-colors flex items-center gap-1.5 whitespace-nowrap shrink-0"
             title="Crear un nuevo video usando este escenario 3D"
           >
-            <Plus className="w-3.5 h-3.5 text-amber-300" />
+            <Plus className="w-3.5 h-3.5 text-white" />
             Crear Video
           </button>
 
           <button
             onClick={onOpenDashboard}
-            className="px-3 py-1.5 text-xs font-semibold text-amber-200 bg-slate-900 hover:bg-slate-800 border border-amber-500/35 rounded-lg transition-colors flex items-center gap-1.5 whitespace-nowrap shrink-0"
+            className="px-3 py-1.5 text-xs font-semibold text-violet-700 bg-white hover:bg-violet-50 border border-cyan-400 rounded-lg transition-colors flex items-center gap-1.5 whitespace-nowrap shrink-0"
           >
-            <LayoutDashboard className="w-3.5 h-3.5 text-amber-400" />
+            <LayoutDashboard className="w-3.5 h-3.5 text-fuchsia-600" />
             Tablero
           </button>
         </div>
       </header>
 
-      {/* Active Scene Text Creator & Dynamic Video Background Control Strip */}
+      {/* Active Scene Text Creator, 3D Audio-Reactive Particle Controls & Dynamic Video Background Strip */}
       {!isDockCollapsed && (
         <div
-          style={{ backgroundColor: 'rgba(9, 12, 20, 0.94)' }}
-          className="absolute top-20 left-1/2 -translate-x-1/2 z-10 max-w-3xl w-[94vw] px-4 py-3 rounded-xl border border-amber-500/35 pointer-events-auto space-y-2.5 shadow-2xl"
+          style={{ backgroundColor: 'rgba(255, 255, 255, 0.95)' }}
+          className="absolute top-20 left-1/2 -translate-x-1/2 z-10 max-w-4xl w-[95vw] px-4 py-3 rounded-xl border-2 border-fuchsia-400 pointer-events-auto space-y-2.5 shadow-xl"
         >
           <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
-            <span className="text-amber-300 font-semibold font-mono tabular-nums flex items-center gap-1.5">
-              <VolumeX className="w-3.5 h-3.5 text-amber-400" />
+            <span className="text-fuchsia-600 font-bold font-mono tabular-nums flex items-center gap-1.5">
+              <VolumeX className="w-3.5 h-3.5 text-cyan-600" />
               <span>
-                Escenario 3D Oro Imperial · Escena {activeSceneIndex + 1}/{Math.max(1, localScenes.length)} · 3D: {subjectPreset.toUpperCase()}
+                Estudio 3D Neón & Blanco · Escena {activeSceneIndex + 1}/{Math.max(1, localScenes.length)} · 3D: {subjectPreset.toUpperCase()}
               </span>
             </span>
 
             {/* Dynamic Video Background Controls */}
             <div className="flex flex-wrap items-center gap-1.5">
-              <span className="text-[11px] font-mono text-amber-400/90">Modo Fondo Video:</span>
+              <span className="text-[11px] font-mono font-bold text-violet-700">Modo Fondo Video:</span>
               {(
                 [
                   { id: 'dome_and_wall', label: 'Domo 360° + LED' },
@@ -1875,8 +2425,8 @@ export default function Studio3DScene({
                   onClick={() => setVideoBgMode(m.id)}
                   className={`px-2 py-0.5 rounded text-[11px] font-semibold transition-colors ${
                     videoBgMode === m.id
-                      ? 'bg-amber-400 text-slate-950 font-bold'
-                      : 'bg-slate-900 text-amber-300/80 border border-amber-500/25 hover:text-amber-200'
+                      ? 'bg-fuchsia-600 text-white font-bold'
+                      : 'bg-white text-cyan-700 border border-cyan-400 hover:bg-cyan-50'
                   }`}
                 >
                   {m.label}
@@ -1885,8 +2435,8 @@ export default function Studio3DScene({
 
               {uploaded3DVideoUrl && (
                 <>
-                  <div className="flex items-center gap-1 bg-slate-900 px-2 py-0.5 rounded border border-amber-500/25">
-                    <span className="text-[10px] font-mono text-amber-300">Brillo</span>
+                  <div className="flex items-center gap-1 bg-white px-2 py-0.5 rounded border border-cyan-400">
+                    <span className="text-[10px] font-mono font-bold text-fuchsia-600">Brillo</span>
                     <input
                       type="range"
                       min={0.2}
@@ -1894,26 +2444,130 @@ export default function Studio3DScene({
                       step={0.05}
                       value={videoBgOpacity}
                       onChange={(e) => setVideoBgOpacity(parseFloat(e.target.value))}
-                      className="w-14 accent-amber-400 cursor-pointer"
+                      className="w-14 accent-fuchsia-600 cursor-pointer"
                     />
                   </div>
                   <button
                     type="button"
                     onClick={() => setIsVideoBgMuted((prev) => !prev)}
-                    className="px-2 py-0.5 rounded bg-slate-900 border border-amber-500/30 text-[11px] text-amber-300 hover:bg-slate-800"
+                    className="px-2 py-0.5 rounded bg-white border border-cyan-400 text-[11px] font-semibold text-violet-700 hover:bg-cyan-50"
                   >
                     {isVideoBgMuted ? 'Audio Video: Mute' : 'Audio Video: ON'}
                   </button>
                   <button
                     type="button"
                     onClick={handleClearVideoBackground}
-                    className="px-2 py-0.5 rounded bg-rose-950/90 border border-rose-500/40 text-[11px] text-rose-200 hover:bg-rose-900"
-                    title="Quitar el video de fondo y restaurar el fondo del estudio 3D"
+                    className="px-2 py-0.5 rounded bg-rose-600 text-[11px] font-semibold text-white hover:bg-rose-500"
+                    title="Quitar el video de fondo y restaurar el fondo blanco del estudio 3D"
                   >
                     Quitar Fondo
                   </button>
                 </>
               )}
+            </div>
+          </div>
+
+          {/* 3D Audio-Reactive Particle System & Music Rhythm Bar */}
+          <div className="flex flex-wrap items-center justify-between gap-2 pt-1.5 border-t border-cyan-200 text-xs">
+            <div className="flex flex-wrap items-center gap-1.5">
+              <button
+                type="button"
+                onClick={() => setParticlesEnabled((prev) => !prev)}
+                className={`px-2.5 py-1 rounded-lg text-[11px] font-extrabold flex items-center gap-1 transition-all border ${
+                  particlesEnabled
+                    ? 'bg-fuchsia-600 text-white border-fuchsia-400 shadow-xs'
+                    : 'bg-white text-violet-700 border-cyan-400 hover:bg-cyan-50'
+                }`}
+                title="Activar o desactivar el sistema de partículas 3D reactivas al ritmo"
+              >
+                <Sparkles className="w-3.5 h-3.5" />
+                <span>Partículas 3D: {particlesEnabled ? 'ON' : 'OFF'}</span>
+              </button>
+
+              {(
+                [
+                  { id: 'vortex', label: 'Vórtice Neón' },
+                  { id: 'fountain', label: 'Fuente Rítmica' },
+                  { id: 'galaxy', label: 'Galaxia Acústica' },
+                ] as { id: ParticlePatternId; label: string }[]
+              ).map((pat) => (
+                <button
+                  key={pat.id}
+                  type="button"
+                  onClick={() => {
+                    setParticlesEnabled(true);
+                    setParticlePattern(pat.id);
+                  }}
+                  className={`px-2 py-1 rounded-lg text-[11px] font-bold transition-colors ${
+                    particlesEnabled && particlePattern === pat.id
+                      ? 'bg-cyan-500 text-white'
+                      : 'bg-white text-violet-700 border border-cyan-300 hover:bg-cyan-50'
+                  }`}
+                >
+                  {pat.label}
+                </button>
+              ))}
+
+              <div className="flex items-center gap-1.5 bg-white px-2.5 py-0.5 rounded-lg border border-cyan-400">
+                <span className="text-[10px] font-mono font-bold text-fuchsia-600">Ritmo</span>
+                <input
+                  type="range"
+                  min={0.5}
+                  max={2.5}
+                  step={0.05}
+                  value={particleReactivity}
+                  onChange={(e) => setParticleReactivity(parseFloat(e.target.value))}
+                  className="w-16 accent-fuchsia-600 cursor-pointer"
+                  title="Sensibilidad de reacción de las partículas 3D al ritmo musical"
+                />
+                <span className="text-[10px] font-mono font-bold text-violet-700 tabular-nums">
+                  {particleReactivity.toFixed(1)}x
+                </span>
+              </div>
+            </div>
+
+            {/* Music Playback & Live Frequency Spectrum Meter */}
+            <div className="flex flex-wrap items-center gap-1.5">
+              <button
+                type="button"
+                onClick={handleToggleMusicPlayback}
+                disabled={isGeneratingMusic}
+                className={`px-2.5 py-1 rounded-lg text-[11px] font-extrabold flex items-center gap-1 transition-all border ${
+                  isMusicPlaying
+                    ? 'bg-cyan-500 text-white border-cyan-400'
+                    : 'bg-white text-fuchsia-600 border-fuchsia-400 hover:bg-fuchsia-50'
+                }`}
+                title="Reproducir o pausar música para que las partículas 3D bailen al ritmo"
+              >
+                {isMusicPlaying ? <Pause className="w-3 h-3" /> : <Volume2 className="w-3 h-3" />}
+                <span className="truncate max-w-36">
+                  {isMusicPlaying ? `Sonando: ${musicTrackTitle}` : 'Reproducir Ritmo Musical'}
+                </span>
+              </button>
+
+              <label
+                className="cursor-pointer px-2 py-1 rounded-lg bg-white hover:bg-cyan-50 border border-cyan-400 text-[11px] font-bold text-violet-700 flex items-center gap-1"
+                title="Cargar archivo MP3 o WAV propio para sincronizar las partículas 3D"
+              >
+                <Upload className="w-3 h-3 text-fuchsia-600" />
+                <span>Cargar MP3</span>
+                <input
+                  type="file"
+                  accept="audio/*,.mp3,.wav,.ogg"
+                  onChange={handleUploadMusicForParticles}
+                  className="hidden"
+                />
+              </label>
+
+              {/* Live 3-Band Neon Equalizer Readout */}
+              <div
+                className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-50 border border-cyan-400 font-mono text-[10px] font-bold tabular-nums"
+                title="Nivel de reacción en tiempo real: Graves (Bass), Medios (Mid) y Agudos (High)"
+              >
+                <span className="text-fuchsia-600">B:{beatMeterUi.bass}%</span>
+                <span className="text-cyan-600">M:{beatMeterUi.mid}%</span>
+                <span className="text-violet-700">H:{beatMeterUi.treble}%</span>
+              </div>
             </div>
           </div>
 
@@ -1925,17 +2579,17 @@ export default function Studio3DScene({
                 setScenarioTextInput(e.target.value);
                 stateRef.current.currentSceneText = e.target.value;
               }}
-              placeholder="Escribe las letras doradas en pantalla para este escenario 3D..."
-              className="flex-1 bg-slate-950 border border-amber-500/35 focus:border-amber-400 rounded-lg px-3 py-1.5 text-xs text-amber-200 outline-none"
+              placeholder="Escribe el texto neón en pantalla para este escenario 3D..."
+              className="flex-1 bg-white border-2 border-cyan-400 focus:border-fuchsia-500 rounded-lg px-3 py-1.5 text-xs text-fuchsia-700 font-semibold outline-none"
             />
             <button
               type="button"
               onClick={handleCreateScenarioText}
-              className="px-3.5 py-1.5 rounded-lg bg-gradient-to-r from-amber-400 to-yellow-500 hover:from-amber-300 hover:to-amber-400 text-slate-950 text-xs font-bold flex items-center gap-1.5 whitespace-nowrap shrink-0 transition-all"
-              title="Crear y aplicar letras color oro en pantalla al escenario 3D actual"
+              className="px-3.5 py-1.5 rounded-lg bg-gradient-to-r from-fuchsia-600 via-violet-600 to-cyan-500 hover:from-fuchsia-500 hover:to-cyan-400 text-white text-xs font-bold flex items-center gap-1.5 whitespace-nowrap shrink-0 transition-all shadow-md"
+              title="Crear y aplicar letras neón en pantalla al escenario 3D actual"
             >
-              {textFeedback ? <Check className="w-3.5 h-3.5 text-slate-950" /> : <TypeIcon className="w-3.5 h-3.5 text-slate-950" />}
-              <span>{textFeedback ? '¡Letras Oro Aplicadas!' : 'Aplicar Texto Oro'}</span>
+              {textFeedback ? <Check className="w-3.5 h-3.5 text-white" /> : <TypeIcon className="w-3.5 h-3.5 text-white" />}
+              <span>{textFeedback ? '¡Texto Neón Aplicado!' : 'Aplicar Texto Neón'}</span>
             </button>
           </div>
         </div>
@@ -1954,17 +2608,17 @@ export default function Studio3DScene({
       >
         <button
           onClick={() => setIsDockCollapsed((prev) => !prev)}
-          style={{ backgroundColor: 'rgba(9, 12, 20, 0.94)' }}
-          className="px-3.5 py-1 rounded-t-lg border border-b-0 border-amber-500/35 text-xs font-semibold text-amber-300 hover:text-amber-200 flex items-center gap-1.5 transition-colors whitespace-nowrap"
+          style={{ backgroundColor: 'rgba(255, 255, 255, 0.95)' }}
+          className="px-3.5 py-1 rounded-t-lg border-2 border-b-0 border-cyan-400 text-xs font-bold text-fuchsia-600 hover:text-violet-700 flex items-center gap-1.5 transition-colors whitespace-nowrap"
         >
           {isDockCollapsed ? (
             <>
-              <ChevronUp className="w-3.5 h-3.5 text-amber-400" />
+              <ChevronUp className="w-3.5 h-3.5 text-cyan-600" />
               Mostrar Controles 3D (H)
             </>
           ) : (
             <>
-              <ChevronDown className="w-3.5 h-3.5 text-amber-400" />
+              <ChevronDown className="w-3.5 h-3.5 text-cyan-600" />
               Ocultar Controles (H)
             </>
           )}
@@ -1972,20 +2626,20 @@ export default function Studio3DScene({
 
         {!isDockCollapsed && (
           <div
-            style={{ backgroundColor: 'rgba(9, 12, 20, 0.94)' }}
-            className="w-full rounded-xl border border-amber-500/35 px-4 py-3 text-amber-200 shadow-2xl flex flex-wrap items-center justify-between gap-3"
+            style={{ backgroundColor: 'rgba(255, 255, 255, 0.95)' }}
+            className="w-full rounded-xl border-2 border-cyan-400 px-4 py-3 text-fuchsia-600 shadow-2xl flex flex-wrap items-center justify-between gap-3"
           >
             {/* 1. Preview Playback & 5 Stage 3D Scene Subjects */}
             <div className="flex items-center gap-2">
               <button
                 onClick={() => setIsPlaying((prev) => !prev)}
-                className="px-3 py-1.5 rounded-lg bg-gradient-to-r from-amber-400 to-yellow-500 hover:from-amber-300 hover:to-amber-400 text-slate-950 text-xs font-bold flex items-center gap-1.5 transition-all whitespace-nowrap shrink-0"
+                className="px-3 py-1.5 rounded-lg bg-gradient-to-r from-fuchsia-600 via-violet-600 to-cyan-500 hover:from-fuchsia-500 hover:to-cyan-400 text-white text-xs font-bold flex items-center gap-1.5 transition-all whitespace-nowrap shrink-0 shadow-sm"
               >
                 {isPlaying ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}
                 {isPlaying ? 'Pausar 3D' : 'Reproducir 3D'}
               </button>
 
-              <div className="flex items-center gap-1 bg-slate-950 p-1 rounded-lg border border-amber-500/30">
+              <div className="flex items-center gap-1 bg-slate-50 p-1 rounded-lg border border-cyan-400">
                 {(
                   [
                     { id: 'coupe', label: 'Cyber Coupe' },
@@ -2000,8 +2654,8 @@ export default function Studio3DScene({
                     onClick={() => handleSelectSubject(sub.id)}
                     className={`px-2.5 py-1 rounded text-xs font-semibold transition-colors whitespace-nowrap shrink-0 ${
                       subjectPreset === sub.id
-                        ? 'bg-amber-500/25 text-amber-200 border border-amber-400/50'
-                        : 'text-amber-400/70 hover:text-amber-200'
+                        ? 'bg-fuchsia-600 text-white font-bold shadow-xs'
+                        : 'text-violet-700 hover:text-fuchsia-600'
                     }`}
                   >
                     {sub.label}
@@ -2011,16 +2665,16 @@ export default function Studio3DScene({
             </div>
 
             {/* 2. Camera Angle Presets */}
-            <div className="flex items-center gap-1 bg-slate-950 p-1 rounded-lg border border-amber-500/30">
-              <Camera className="w-3.5 h-3.5 text-amber-400 ml-1.5 mr-1 shrink-0" />
+            <div className="flex items-center gap-1 bg-slate-50 p-1 rounded-lg border border-cyan-400">
+              <Camera className="w-3.5 h-3.5 text-fuchsia-600 ml-1.5 mr-1 shrink-0" />
               {(Object.keys(CAMERA_PRESETS) as CameraPresetId[]).map((presetKey) => (
                 <button
                   key={presetKey}
                   onClick={() => triggerCameraPreset(presetKey)}
                   className={`px-2.5 py-1 rounded text-xs font-semibold transition-colors whitespace-nowrap shrink-0 ${
                     cameraPreset === presetKey
-                      ? 'bg-amber-400 text-slate-950 font-bold'
-                      : 'text-amber-400/70 hover:text-amber-200'
+                      ? 'bg-cyan-500 text-white font-bold'
+                      : 'text-violet-700 hover:text-fuchsia-600'
                   }`}
                 >
                   {CAMERA_PRESETS[presetKey].label}
@@ -2030,16 +2684,16 @@ export default function Studio3DScene({
 
             {/* 3. Surface Finish & Lighting Mood */}
             <div className="flex items-center gap-2">
-              <div className="flex items-center gap-1 bg-slate-950 p-1 rounded-lg border border-amber-500/30">
-                <Sparkles className="w-3.5 h-3.5 text-amber-400 ml-1.5 mr-1 shrink-0" />
+              <div className="flex items-center gap-1 bg-slate-50 p-1 rounded-lg border border-cyan-400">
+                <Sparkles className="w-3.5 h-3.5 text-fuchsia-600 ml-1.5 mr-1 shrink-0" />
                 {(Object.keys(FINISH_PRESETS) as FinishPresetId[]).map((fKey) => (
                   <button
                     key={fKey}
                     onClick={() => setFinishPreset(fKey)}
                     className={`px-2 py-1 rounded text-xs font-semibold transition-colors whitespace-nowrap shrink-0 ${
                       finishPreset === fKey
-                        ? 'bg-amber-500/25 text-amber-200 border border-amber-400/50'
-                        : 'text-amber-400/70 hover:text-amber-200'
+                        ? 'bg-fuchsia-600 text-white font-bold'
+                        : 'text-violet-700 hover:text-fuchsia-600'
                     }`}
                   >
                     {FINISH_PRESETS[fKey].label.split(' ')[1]}
@@ -2047,28 +2701,28 @@ export default function Studio3DScene({
                 ))}
               </div>
 
-              <div className="flex items-center gap-1 bg-slate-950 p-1 rounded-lg border border-amber-500/30">
-                <Sun className="w-3.5 h-3.5 text-amber-400 ml-1.5 mr-1 shrink-0" />
+              <div className="flex items-center gap-1 bg-slate-50 p-1 rounded-lg border border-cyan-400">
+                <Sun className="w-3.5 h-3.5 text-cyan-600 ml-1.5 mr-1 shrink-0" />
                 {(Object.keys(LIGHTING_PRESETS) as LightingPresetId[]).map((lKey) => (
                   <button
                     key={lKey}
                     onClick={() => setLightingPreset(lKey)}
                     className={`px-2 py-1 rounded text-xs font-semibold transition-colors whitespace-nowrap shrink-0 ${
                       lightingPreset === lKey
-                        ? 'bg-amber-500/25 text-amber-200 border border-amber-400/50'
-                        : 'text-amber-400/70 hover:text-amber-200'
+                        ? 'bg-cyan-500 text-white font-bold'
+                        : 'text-violet-700 hover:text-fuchsia-600'
                     }`}
                   >
-                    {LIGHTING_PRESETS[lKey].label.split(' ')[0]}
+                    {LIGHTING_PRESETS[lKey].label}
                   </button>
                 ))}
               </div>
             </div>
 
             {/* 4. Exploded Rig Slider */}
-            <div className="flex items-center gap-2 bg-slate-950 px-3 py-1.5 rounded-lg border border-amber-500/30">
-              <Layers className="w-3.5 h-3.5 text-amber-400 shrink-0" />
-              <span className="text-xs font-semibold text-amber-200 whitespace-nowrap">Explode</span>
+            <div className="flex items-center gap-2 bg-slate-50 px-3 py-1.5 rounded-lg border border-cyan-400">
+              <Layers className="w-3.5 h-3.5 text-fuchsia-600 shrink-0" />
+              <span className="text-xs font-bold text-violet-700 whitespace-nowrap">Explode</span>
               <input
                 type="range"
                 min={0}
@@ -2076,9 +2730,9 @@ export default function Studio3DScene({
                 step={0.01}
                 value={explodedFactor}
                 onChange={(e) => setExplodedFactor(parseFloat(e.target.value))}
-                className="w-20 accent-amber-400 cursor-pointer"
+                className="w-20 accent-fuchsia-600 cursor-pointer"
               />
-              <span className="text-xs font-mono tabular-nums text-amber-300 w-8 text-right">
+              <span className="text-xs font-mono font-bold tabular-nums text-fuchsia-600 w-8 text-right">
                 {Math.round(explodedFactor * 100)}%
               </span>
             </div>

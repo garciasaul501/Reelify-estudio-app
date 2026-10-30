@@ -892,8 +892,13 @@ Devuelve un JSON con:
   const hasBuiltDist = fs.existsSync(path.join(distPath, 'index.html'));
   const isProduction = process.env.NODE_ENV === 'production' || (isCompiledEntry && hasBuiltDist);
 
+  // Start listening on PORT immediately so readiness checks succeed without waiting on Vite cold-start
+  httpServer.listen(PORT, '0.0.0.0', () => {
+    console.log(`Server running on http://0.0.0.0:${PORT}`);
+  });
+
   if (!isProduction) {
-    const vite = await createViteServer({
+    const vitePromise = createViteServer({
       server: {
         middlewareMode: true,
         hmr: false,
@@ -901,17 +906,25 @@ Devuelve un JSON con:
       },
       appType: 'spa',
     });
-    app.use(vite.middlewares);
+
+    app.use(async (req, res, next) => {
+      try {
+        const vite = await vitePromise;
+        vite.middlewares(req, res, next);
+      } catch (err) {
+        next(err);
+      }
+    });
   } else {
     app.use(express.static(distPath));
     app.get('*', (_req, res) => {
       res.sendFile(path.join(distPath, 'index.html'));
     });
   }
-
-  httpServer.listen(PORT, '0.0.0.0', () => {
-    console.log(`Server running on http://0.0.0.0:${PORT}`);
-  });
 }
 
-startServer();
+startServer().catch((err) => {
+  console.error('Fatal server startup error:', err);
+  process.exit(1);
+});
+
