@@ -198,15 +198,22 @@ export default function Studio3DScene({
   const [cameraPreset, setCameraPreset] = useState<CameraPresetId>('director');
   const [lightingPreset, setLightingPreset] = useState<LightingPresetId>('golden');
   const [subjectPreset, setSubjectPreset] = useState<SubjectPresetId>(initialSubject);
-  const [finishPreset, setFinishPreset] = useState<FinishPresetId>('obsidian');
+  const [finishPreset, setFinishPreset] = useState<FinishPresetId>('gold');
   const [explodedFactor, setExplodedFactor] = useState<number>(0);
   const [isPlaying, setIsPlaying] = useState<boolean>(true);
   const [isAutoMultiScene, setIsAutoMultiScene] = useState<boolean>(true);
   const [activeSceneIndex, setActiveSceneIndex] = useState<number>(0);
   const [isDockCollapsed, setIsDockCollapsed] = useState<boolean>(false);
-  const [inspectedPartName, setInspectedPartName] = useState<string>('3D LED Volume Wall & Turntable Stage');
+  const [inspectedPartName, setInspectedPartName] = useState<string>('Estudio 3D Imperial · Pantalla IMAX & Fondo Dinámico');
   const [localScenes, setLocalScenes] = useState<SceneItem[]>(() => activeProject?.scenes || []);
   const [uploaded3DVideoUrl, setUploaded3DVideoUrl] = useState<string | null>(() => activeProject?.videoData || null);
+  const [uploaded3DVideoName, setUploaded3DVideoName] = useState<string>(
+    () => (activeProject?.videoData ? 'Video del Proyecto Activo' : '')
+  );
+  const [videoBgMode, setVideoBgMode] = useState<'dome_and_wall' | 'scene_backdrop' | 'led_wall'>('dome_and_wall');
+  const [videoBgOpacity, setVideoBgOpacity] = useState<number>(0.85);
+  const [isVideoBgMuted, setIsVideoBgMuted] = useState<boolean>(true);
+  const [isDraggingVideoOver3D, setIsDraggingVideoOver3D] = useState<boolean>(false);
   const [isLiveWebcamOnWall, setIsLiveWebcamOnWall] = useState<boolean>(false);
   const [webcamFacingMode, setWebcamFacingMode] = useState<'user' | 'environment'>('user');
   const [isWebcamMirrored, setIsWebcamMirrored] = useState<boolean>(false);
@@ -216,11 +223,12 @@ export default function Studio3DScene({
     () =>
       activeProject?.scenes?.[0]?.overlayText ||
       activeProject?.scenes?.[0]?.description ||
-      'CYBER COUPE 3D · PRODUCCIÓN EN ESCENARIO SIN VOZ'
+      'EDICIÓN DE LUJO ORO 3D · PRODUCCIÓN EN ESCENARIO SIN VOZ'
   );
   const [textFeedback, setTextFeedback] = useState<boolean>(false);
 
   const videoElRef = useRef<HTMLVideoElement | null>(null);
+  const threeVideoTexRef = useRef<THREE.VideoTexture | null>(null);
   const liveWebcamStreamRef = useRef<MediaStream | null>(null);
   const sceneImgElRef = useRef<HTMLImageElement | null>(null);
 
@@ -242,6 +250,9 @@ export default function Studio3DScene({
     }
     if (activeProject?.videoData) {
       setUploaded3DVideoUrl(activeProject.videoData);
+      if (!uploaded3DVideoName) {
+        setUploaded3DVideoName(activeProject.title || 'Video del Proyecto');
+      }
     }
   }, [activeProject]);
 
@@ -251,12 +262,15 @@ export default function Studio3DScene({
     hasPendingCameraTransition: false,
     lightingPreset: 'golden' as LightingPresetId,
     subjectPreset: initialSubject as SubjectPresetId,
-    finishPreset: 'obsidian' as FinishPresetId,
+    finishPreset: 'gold' as FinishPresetId,
     explodedFactor: 0,
     isPlaying: true,
     activeSceneIndex: 0,
     isWebcamMirrored: false,
-    projectTitle: activeProject?.title || 'Reelify 3D Stage',
+    hasDynamicVideoBg: Boolean(activeProject?.videoData),
+    videoBgMode: 'dome_and_wall' as 'dome_and_wall' | 'scene_backdrop' | 'led_wall',
+    videoBgOpacity: 0.85,
+    projectTitle: activeProject?.title || 'Reelify 3D Gold Studio',
     currentSceneText:
       activeProject?.scenes?.[0]?.overlayText ||
       activeProject?.scenes?.[0]?.description ||
@@ -271,6 +285,20 @@ export default function Studio3DScene({
   useEffect(() => {
     stateRef.current.explodedFactor = explodedFactor;
   }, [explodedFactor]);
+
+  useEffect(() => {
+    stateRef.current.videoBgMode = videoBgMode;
+  }, [videoBgMode]);
+
+  useEffect(() => {
+    stateRef.current.videoBgOpacity = videoBgOpacity;
+  }, [videoBgOpacity]);
+
+  useEffect(() => {
+    if (videoElRef.current && !isLiveWebcamOnWall) {
+      videoElRef.current.muted = isVideoBgMuted;
+    }
+  }, [isVideoBgMuted, isLiveWebcamOnWall]);
 
   useEffect(() => {
     stateRef.current.isPlaying = isPlaying;
@@ -298,7 +326,7 @@ export default function Studio3DScene({
   // Update active scene image & 3D preset when activeSceneIndex changes
   useEffect(() => {
     stateRef.current.activeSceneIndex = activeSceneIndex;
-    stateRef.current.projectTitle = activeProject?.title || 'Reelify 3D Stage';
+    stateRef.current.projectTitle = activeProject?.title || 'Reelify 3D Gold Studio';
     const sc = localScenes[activeSceneIndex];
     if (sc) {
       const displayTxt = sc.overlayText || sc.description;
@@ -334,10 +362,15 @@ export default function Studio3DScene({
     return () => clearTimeout(timer);
   }, [isPlaying, isAutoMultiScene, activeSceneIndex, localScenes]);
 
-  // Load uploaded video into hidden HTMLVideoElement for 3D LED Wall projection
+  // Load uploaded video into hidden HTMLVideoElement + THREE.VideoTexture for Dynamic 3D Studio Background & LED Wall
   useEffect(() => {
     if (isLiveWebcamOnWall) return;
     if (!uploaded3DVideoUrl) {
+      stateRef.current.hasDynamicVideoBg = false;
+      if (threeVideoTexRef.current) {
+        threeVideoTexRef.current.dispose();
+        threeVideoTexRef.current = null;
+      }
       if (videoElRef.current) {
         videoElRef.current.pause();
         videoElRef.current = null;
@@ -348,10 +381,24 @@ export default function Studio3DScene({
     vid.src = uploaded3DVideoUrl;
     vid.crossOrigin = 'anonymous';
     vid.loop = true;
-    vid.muted = true;
+    vid.muted = isVideoBgMuted;
     vid.playsInline = true;
-    vid.play().catch(() => {});
+    vid.play().catch(() => {
+      vid.muted = true;
+      vid.play().catch(() => {});
+    });
     videoElRef.current = vid;
+
+    const vTex = new THREE.VideoTexture(vid);
+    vTex.colorSpace = THREE.SRGBColorSpace;
+    vTex.minFilter = THREE.LinearFilter;
+    vTex.magFilter = THREE.LinearFilter;
+    if (threeVideoTexRef.current) {
+      threeVideoTexRef.current.dispose();
+    }
+    threeVideoTexRef.current = vTex;
+    stateRef.current.hasDynamicVideoBg = true;
+
     return () => {
       vid.pause();
     };
@@ -371,9 +418,16 @@ export default function Studio3DScene({
       vid.playsInline = true;
       await vid.play();
       videoElRef.current = vid;
+      const vTex = new THREE.VideoTexture(vid);
+      vTex.colorSpace = THREE.SRGBColorSpace;
+      vTex.minFilter = THREE.LinearFilter;
+      vTex.magFilter = THREE.LinearFilter;
+      if (threeVideoTexRef.current) threeVideoTexRef.current.dispose();
+      threeVideoTexRef.current = vTex;
+      stateRef.current.hasDynamicVideoBg = true;
       setIsLiveWebcamOnWall(true);
       setInspectedPartName(
-        `Cámara en Vivo (${mode === 'user' ? 'Frontal' : 'Trasera'}) en Pantalla Curva 3D`
+        `Cámara en Vivo (${mode === 'user' ? 'Frontal' : 'Trasera'}) · Fondo Dinámico 3D`
       );
     } catch {
       try {
@@ -385,8 +439,13 @@ export default function Studio3DScene({
         vid.playsInline = true;
         await vid.play();
         videoElRef.current = vid;
+        const vTex = new THREE.VideoTexture(vid);
+        vTex.colorSpace = THREE.SRGBColorSpace;
+        if (threeVideoTexRef.current) threeVideoTexRef.current.dispose();
+        threeVideoTexRef.current = vTex;
+        stateRef.current.hasDynamicVideoBg = true;
         setIsLiveWebcamOnWall(true);
-        setInspectedPartName('Cámara en Vivo Proyectada en Pantalla Curva 3D');
+        setInspectedPartName('Cámara en Vivo Proyectada en Fondo Dinámico 3D');
       } catch {
         if (onOpenCameraRecorder) {
           onOpenCameraRecorder();
@@ -395,13 +454,14 @@ export default function Studio3DScene({
     }
   };
 
-  // Toggle Live Device Camera Feed directly onto the 3D Curved LED Volume Wall
+  // Toggle Live Device Camera Feed directly onto the 3D Curved LED Volume Wall & Dynamic Background
   const handleToggleLiveWebcamOn3DWall = async () => {
     if (isLiveWebcamOnWall) {
       liveWebcamStreamRef.current?.getTracks().forEach((t) => t.stop());
       liveWebcamStreamRef.current = null;
       setIsLiveWebcamOnWall(false);
-      setInspectedPartName('3D LED Volume Wall & Turntable Stage');
+      stateRef.current.hasDynamicVideoBg = Boolean(uploaded3DVideoUrl);
+      setInspectedPartName('Estudio 3D Imperial · Pantalla IMAX & Fondo Dinámico');
       return;
     }
     await startWebcamOn3DWall(webcamFacingMode);
@@ -422,6 +482,9 @@ export default function Studio3DScene({
   useEffect(() => {
     return () => {
       liveWebcamStreamRef.current?.getTracks().forEach((t) => t.stop());
+      if (threeVideoTexRef.current) {
+        threeVideoTexRef.current.dispose();
+      }
     };
   }, []);
 
@@ -455,17 +518,46 @@ export default function Studio3DScene({
     }
   };
 
-  const handleUploadVideoTo3D = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+  const applyVideoFileAs3DBackground = (file: File) => {
     if (isLiveWebcamOnWall) {
       liveWebcamStreamRef.current?.getTracks().forEach((t) => t.stop());
       setIsLiveWebcamOnWall(false);
     }
     const objUrl = URL.createObjectURL(file);
     setUploaded3DVideoUrl(objUrl);
+    setUploaded3DVideoName(file.name);
     setIsPlaying(true);
-    setInspectedPartName(`3D Curved LED Volume Wall · Playing: ${file.name}`);
+    setInspectedPartName(`Fondo de Video Dinámico 3D Activo · ${file.name}`);
+    if (onSaveProjectScenes) {
+      onSaveProjectScenes(localScenes, objUrl);
+    }
+  };
+
+  const handleUploadVideoTo3D = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    applyVideoFileAs3DBackground(file);
+    e.target.value = '';
+  };
+
+  const handleDropVideoOn3DStage = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    setIsDraggingVideoOver3D(false);
+    const file = e.dataTransfer.files?.[0];
+    if (file && (file.type.startsWith('video/') || /\.(mp4|webm|mov|mkv|ogg)$/i.test(file.name))) {
+      applyVideoFileAs3DBackground(file);
+    }
+  };
+
+  const handleClearVideoBackground = () => {
+    if (isLiveWebcamOnWall) {
+      liveWebcamStreamRef.current?.getTracks().forEach((t) => t.stop());
+      setIsLiveWebcamOnWall(false);
+    }
+    setUploaded3DVideoUrl(null);
+    setUploaded3DVideoName('');
+    stateRef.current.hasDynamicVideoBg = false;
+    setInspectedPartName('Estudio 3D Imperial · Fondo Original Restaurado');
   };
 
   const handleSave3DConfig = () => {
@@ -478,7 +570,7 @@ export default function Studio3DScene({
 
   const handleCreateScenarioText = () => {
     const presetLabels: Record<SubjectPresetId, string> = {
-      coupe: 'AUTO CYBER COUPE 3D · VELOCIDAD Y PRECISIÓN EN PISTA DE NEÓN',
+      coupe: 'AUTO CYBER COUPE 3D · EDICIÓN ORO IMPERIAL EN ESTUDIO',
       station: 'ESTACIÓN ORBITAL 3D · ANILLO CENTRÍFUGO EN GRAVEDAD CERO',
       drone: 'DRON DE CINE 8K · TOMA AÉREA ESTABILIZADA EN ESTUDIO',
       sculpture: 'ESCULTURA GIROSCÓPICA 3D · ARMONÍA CINÉTICA Y LUZ DORADA',
@@ -750,6 +842,20 @@ export default function Studio3DScene({
     stageShadowMesh.position.y = 0.02;
     scene.add(stageShadowMesh);
 
+    // Panoramic 360° Dynamic Video Studio Sky-Dome (renders uploaded video as surrounding 3D environment)
+    const videoSkyDomeGeo = new THREE.SphereGeometry(38, 48, 32);
+    const videoSkyDomeMat = new THREE.MeshBasicMaterial({
+      side: THREE.BackSide,
+      transparent: true,
+      opacity: 0.85,
+      depthWrite: false,
+    });
+    const videoSkyDomeMesh = new THREE.Mesh(videoSkyDomeGeo, videoSkyDomeMat);
+    videoSkyDomeMesh.position.set(0, 2.0, 0);
+    videoSkyDomeMesh.visible = false;
+    videoSkyDomeMesh.userData.partName = 'Domo Panorámico 360° · Fondo de Video Dinámico 3D';
+    scene.add(videoSkyDomeMesh);
+
     // Curved 3D Cinema IMAX LED Volume Wall
     const ledCanvas = document.createElement('canvas');
     ledCanvas.width = 1024;
@@ -770,12 +876,12 @@ export default function Studio3DScene({
     });
     const ledWallMesh = new THREE.Mesh(ledWallGeo, ledWallMat);
     ledWallMesh.position.set(0, 0, 7.2);
-    ledWallMesh.userData.partName = 'Curved 3D IMAX LED Volume Wall (Video & Multi-Scene Projection)';
+    ledWallMesh.userData.partName = 'Pantalla Curva IMAX 3D (Fondo de Video Dinámico y Escenas)';
     ledWallGroup.add(ledWallMesh);
 
     const ledFrameTop = new THREE.Mesh(
       new THREE.TorusGeometry(8.52, 0.06, 12, 48, Math.PI * 0.64),
-      darkMatteMat
+      copperAccentMat
     );
     ledFrameTop.rotation.x = Math.PI / 2;
     ledFrameTop.rotation.z = Math.PI * 0.18;
@@ -1328,9 +1434,9 @@ export default function Studio3DScene({
       const h = ledCanvas.height;
 
       const grad = ledCtx.createLinearGradient(0, 0, w, h);
-      grad.addColorStop(0, '#070b14');
-      grad.addColorStop(0.5, '#1e1b4b');
-      grad.addColorStop(1, '#090d16');
+      grad.addColorStop(0, '#07090e');
+      grad.addColorStop(0.5, '#191408');
+      grad.addColorStop(1, '#090c14');
       ledCtx.fillStyle = grad;
       ledCtx.fillRect(0, 0, w, h);
 
@@ -1351,7 +1457,7 @@ export default function Studio3DScene({
         const dh = h * zoom;
         ledCtx.drawImage(imgEl, (w - dw) / 2, (h - dh) / 2, dw, dh);
       } else {
-        ledCtx.strokeStyle = 'rgba(56, 189, 248, 0.22)';
+        ledCtx.strokeStyle = 'rgba(212, 175, 55, 0.24)';
         ledCtx.lineWidth = 2;
         for (let x = 0; x <= w; x += 64) {
           ledCtx.beginPath();
@@ -1367,17 +1473,26 @@ export default function Studio3DScene({
         }
       }
 
-      ledCtx.fillStyle = 'rgba(9, 13, 22, 0.88)';
-      ledCtx.fillRect(0, h - 102, w, 102);
-      ledCtx.fillStyle = '#38bdf8';
-      ledCtx.font = 'bold 17px monospace';
+      // Luxury Obsidian & Gold Cinema Lower-Third Bar
+      ledCtx.fillStyle = 'rgba(7, 9, 14, 0.90)';
+      ledCtx.fillRect(0, h - 104, w, 104);
+      ledCtx.strokeStyle = 'rgba(245, 208, 97, 0.55)';
+      ledCtx.lineWidth = 2;
+      ledCtx.beginPath();
+      ledCtx.moveTo(0, h - 104);
+      ledCtx.lineTo(w, h - 104);
+      ledCtx.stroke();
+
+      ledCtx.fillStyle = '#fbbf24';
+      ledCtx.font = 'bold 16px "JetBrains Mono", monospace';
+      const bgVideoTag = stateRef.current.hasDynamicVideoBg ? ' · FONDO DE VIDEO 3D ACTIVO' : '';
       ledCtx.fillText(
-        `ESCENARIO 3D (SIN VOZ · TEXTO ACTIVO) · ESCENA 0${stateRef.current.activeSceneIndex + 1} · ${stateRef.current.projectTitle.toUpperCase()}`,
+        `ESTUDIO 3D ORO IMPERIAL · ESCENA 0${stateRef.current.activeSceneIndex + 1} · ${stateRef.current.projectTitle.toUpperCase()}${bgVideoTag}`,
         36,
         h - 64
       );
-      ledCtx.fillStyle = '#ffffff';
-      ledCtx.font = 'bold 24px sans-serif';
+      ledCtx.fillStyle = '#fde047';
+      ledCtx.font = 'bold 24px "Cinzel", Georgia, serif';
       const desc = stateRef.current.currentSceneText || '';
       ledCtx.fillText(desc.length > 68 ? `${desc.slice(0, 68)}...` : desc, 36, h - 24);
 
@@ -1419,6 +1534,38 @@ export default function Studio3DScene({
         updateLedVolumeTexture(clock.elapsedTime);
       }
 
+      // Dynamic 3D Video Background Binding (Sky-Dome 360°, Direct Scene Backdrop, or LED Wall)
+      const activeVideoTex = threeVideoTexRef.current;
+      const vidEl = videoElRef.current;
+      const isVideoReady = Boolean(st.hasDynamicVideoBg && activeVideoTex && vidEl && vidEl.readyState >= 2);
+
+      if (isVideoReady && activeVideoTex) {
+        if (st.videoBgMode === 'scene_backdrop') {
+          scene.background = activeVideoTex;
+          videoSkyDomeMesh.visible = false;
+        } else if (st.videoBgMode === 'dome_and_wall') {
+          if ( videoSkyDomeMat.map !== activeVideoTex ) {
+            videoSkyDomeMat.map = activeVideoTex;
+            videoSkyDomeMat.needsUpdate = true;
+          }
+          videoSkyDomeMat.opacity = st.videoBgOpacity;
+          videoSkyDomeMesh.visible = true;
+          if (!(scene.background instanceof THREE.Color)) {
+            scene.background = new THREE.Color(LIGHTING_PRESETS[st.lightingPreset].bgHex);
+          }
+        } else {
+          videoSkyDomeMesh.visible = false;
+          if (!(scene.background instanceof THREE.Color)) {
+            scene.background = new THREE.Color(LIGHTING_PRESETS[st.lightingPreset].bgHex);
+          }
+        }
+      } else {
+        videoSkyDomeMesh.visible = false;
+        if (!(scene.background instanceof THREE.Color)) {
+          scene.background = new THREE.Color(LIGHTING_PRESETS[st.lightingPreset].bgHex);
+        }
+      }
+
       const finish = FINISH_PRESETS[st.finishPreset];
       _scratchColor.setHex(finish.color);
       heroPrimaryMat.color.lerp(_scratchColor, 1 - Math.exp(-8 * delta));
@@ -1432,6 +1579,7 @@ export default function Studio3DScene({
       }
       if (scene.fog instanceof THREE.FogExp2) {
         scene.fog.color.lerp(_scratchColor, 1 - Math.exp(-5 * delta));
+        scene.fog.density = isVideoReady && st.videoBgMode !== 'led_wall' ? 0.006 : 0.022;
       }
       _scratchColor.setHex(lp.keyHex);
       keyLight.color.lerp(_scratchColor, 1 - Math.exp(-6 * delta));
@@ -1454,6 +1602,9 @@ export default function Studio3DScene({
         subjectsRoot.rotation.y += delta * 0.55;
         frontReel.rotation.x += delta * 2.2;
         rearReel.rotation.x += delta * 2.2;
+        if (videoSkyDomeMesh.visible) {
+          videoSkyDomeMesh.rotation.y += delta * 0.04;
+        }
 
         cameraRigGroup.position.x = Math.sin(dollyAngle) * 1.35;
         cameraHeadGroup.lookAt(0, 0.9, 0);
@@ -1518,37 +1669,63 @@ export default function Studio3DScene({
       floorTex.dispose();
       contactShadowTex.dispose();
       ledCanvasTex.dispose();
+      videoSkyDomeGeo.dispose();
+      videoSkyDomeMat.dispose();
       envTexture.dispose();
       renderer.dispose();
     };
   }, []);
 
-  const currentScene = localScenes[activeSceneIndex] || null;
-
   return (
-    <div className="relative w-screen h-screen overflow-hidden bg-slate-950 select-none">
+    <div
+      onDragOver={(e) => {
+        e.preventDefault();
+        if (!isDraggingVideoOver3D) setIsDraggingVideoOver3D(true);
+      }}
+      onDragLeave={() => setIsDraggingVideoOver3D(false)}
+      onDrop={handleDropVideoOn3DStage}
+      className="relative w-screen h-screen overflow-hidden bg-[#07090e] text-[#f5d061] select-none"
+    >
       {/* Dedicated WebGL Mount Container (Outside React HUD overlays) */}
       <div ref={canvasMountRef} className="absolute inset-0 w-full h-full" />
 
-      {/* Top Bar Contract: 3 Zones */}
+      {/* Drag & Drop Video Overlay */}
+      {isDraggingVideoOver3D && (
+        <div
+          style={{ backgroundColor: 'rgba(7, 9, 14, 0.85)' }}
+          className="absolute inset-4 z-30 rounded-2xl border-2 border-dashed border-amber-400 flex flex-col items-center justify-center gap-3 pointer-events-none"
+        >
+          <Upload className="w-12 h-12 text-amber-300" />
+          <p className="text-xl font-bold text-amber-200 font-display-gold">
+            Suelta tu archivo de video aquí para usarlo como Fondo Dinámico del Estudio 3D
+          </p>
+          <p className="text-xs text-amber-400/90">
+            Compatible con MP4, WebM y MOV · Proyección en Domo 360° + Pantalla Curva IMAX 3D
+          </p>
+        </div>
+      )}
+
+      {/* Top Bar Contract: Luxury Obsidian & Gold 3 Zones */}
       <header
-        style={{ backgroundColor: 'rgba(11, 15, 25, 0.92)' }}
-        className="absolute top-4 left-6 right-6 z-10 flex items-center justify-between gap-4 px-5 py-3 rounded-xl border border-slate-800 text-slate-200 pointer-events-auto"
+        style={{ backgroundColor: 'rgba(9, 12, 20, 0.94)' }}
+        className="absolute top-4 left-6 right-6 z-10 flex items-center justify-between gap-4 px-5 py-3 rounded-xl border border-amber-500/35 text-amber-200 pointer-events-auto shadow-2xl"
       >
         {/* Zone 1: Brand Wordmark */}
         <div className="flex items-center gap-2.5 whitespace-nowrap shrink-0">
-          <Video className="w-5 h-5 text-indigo-400" />
-          <span className="text-base font-bold tracking-tight text-white">Reelify Video AI</span>
-          <span className="text-xs text-slate-500">·</span>
-          <span className="text-xs text-slate-400 font-medium truncate max-w-52">{inspectedPartName}</span>
+          <Video className="w-5 h-5 text-amber-400" />
+          <span className="text-base font-extrabold tracking-wider text-amber-300 font-display-gold">
+            Reelify Video AI
+          </span>
+          <span className="text-xs text-amber-500/60">·</span>
+          <span className="text-xs text-amber-200/90 font-medium truncate max-w-52">{inspectedPartName}</span>
         </div>
 
         {/* Zone 2: Multi-Scene Sequence Switcher */}
-        <div className="hidden lg:flex items-center gap-2 text-xs text-slate-300 min-w-0 overflow-x-auto">
+        <div className="hidden lg:flex items-center gap-2 text-xs text-amber-200 min-w-0 overflow-x-auto">
           {activeProject ? (
             <div className="flex items-center gap-2 truncate">
-              <Folder className="w-3.5 h-3.5 text-indigo-400 shrink-0" />
-              <span className="font-semibold text-white truncate max-w-40">{activeProject.title}</span>
+              <Folder className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+              <span className="font-semibold text-amber-200 truncate max-w-40">{activeProject.title}</span>
               {localScenes.length > 0 && (
                 <div className="flex items-center gap-1 ml-1">
                   {localScenes.map((sc, idx) => (
@@ -1561,8 +1738,8 @@ export default function Studio3DScene({
                       }}
                       className={`px-2 py-0.5 rounded text-xs font-mono tabular-nums transition-colors ${
                         activeSceneIndex === idx
-                          ? 'bg-indigo-600 text-white font-semibold'
-                          : 'bg-slate-800 text-slate-400 hover:text-white'
+                          ? 'bg-amber-500 text-slate-950 font-bold'
+                          : 'bg-slate-900 text-amber-300/80 border border-amber-500/25 hover:text-amber-200'
                       }`}
                       title={sc.description}
                     >
@@ -1574,8 +1751,10 @@ export default function Studio3DScene({
               {localScenes.length > 1 && (
                 <button
                   onClick={() => setIsAutoMultiScene((prev) => !prev)}
-                  className={`px-2.5 py-0.5 rounded text-xs font-medium transition-colors ${
-                    isAutoMultiScene ? 'bg-emerald-600/90 text-white' : 'bg-slate-800 text-slate-400'
+                  className={`px-2.5 py-0.5 rounded text-xs font-semibold transition-colors ${
+                    isAutoMultiScene
+                      ? 'bg-amber-500/20 text-amber-200 border border-amber-400/50'
+                      : 'bg-slate-900 text-amber-400/60 border border-amber-500/20'
                   }`}
                 >
                   {isAutoMultiScene ? 'Auto Multi-Escena: ON' : 'Auto Multi-Escena: OFF'}
@@ -1583,70 +1762,62 @@ export default function Studio3DScene({
               )}
             </div>
           ) : (
-            <span className="text-slate-400">
-              Escenario 3D con Pantalla LED Curva · Sube o graba un video con tu cámara
+            <span className="text-amber-300/90">
+              Estudio 3D con Fondo de Video Dinámico · Sube un video MP4/WebM o arrástralo a la escena
             </span>
           )}
         </div>
 
-        {/* Zone 3: Camera Button, Flip Camera, Upload Video to 3D Stage, Create Video in Scenario, Save 3D Config, & Navigation */}
+        {/* Zone 3: Upload Dynamic Video Background, Camera, Snapshot, Save & Navigation */}
         <div className="flex items-center gap-2 shrink-0">
+          <label
+            className="cursor-pointer px-3.5 py-1.5 text-xs font-bold text-slate-950 bg-gradient-to-r from-amber-300 via-amber-400 to-yellow-500 hover:from-amber-200 hover:to-amber-400 rounded-lg transition-all flex items-center gap-1.5 whitespace-nowrap shrink-0 shadow-md"
+            title="Subir un archivo de video (.mp4, .webm, .mov) para usarlo como fondo dinámico del estudio 3D"
+          >
+            <Upload className="w-3.5 h-3.5 text-slate-950" />
+            <span>{uploaded3DVideoUrl ? 'Cambiar Video de Fondo 3D' : 'Subir Video de Fondo 3D'}</span>
+            <input type="file" accept="video/*,.mp4,.webm,.mov" onChange={handleUploadVideoTo3D} className="hidden" />
+          </label>
+
           <button
             onClick={handleToggleLiveWebcamOn3DWall}
-            className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-colors flex items-center gap-1.5 whitespace-nowrap shrink-0 border ${
+            className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors flex items-center gap-1.5 whitespace-nowrap shrink-0 border ${
               isLiveWebcamOnWall
-                ? 'bg-rose-600 text-white border-rose-500'
-                : 'text-rose-200 bg-rose-950/90 hover:bg-rose-900 border-rose-700/60'
+                ? 'bg-rose-600 text-amber-100 border-rose-400'
+                : 'text-amber-200 bg-slate-900 hover:bg-slate-800 border-amber-500/35'
             }`}
-            title="Proyectar cámara de tu dispositivo en vivo en la pantalla curva 3D"
+            title="Proyectar cámara de tu dispositivo en vivo como fondo dinámico 3D"
           >
-            <Camera className="w-3.5 h-3.5" />
+            <Camera className="w-3.5 h-3.5 text-amber-400" />
             {isLiveWebcamOnWall ? 'Detener Cámara 3D' : 'Cámara en 3D'}
           </button>
 
           {isLiveWebcamOnWall && (
             <button
               onClick={handleFlipWebcamOn3DWall}
-              className="px-2.5 py-1.5 text-xs font-medium text-indigo-200 bg-indigo-950/90 hover:bg-indigo-900 border border-indigo-700/60 rounded-lg transition-colors flex items-center gap-1.5 whitespace-nowrap shrink-0"
+              className="px-2.5 py-1.5 text-xs font-semibold text-amber-200 bg-slate-900 hover:bg-slate-800 border border-amber-500/35 rounded-lg transition-colors flex items-center gap-1.5 whitespace-nowrap shrink-0"
               title="Voltear cámara frontal/trasera en la pantalla 3D"
             >
-              <SwitchCamera className="w-3.5 h-3.5 text-indigo-400" />
-              Voltear Cámara
+              <SwitchCamera className="w-3.5 h-3.5 text-amber-400" />
+              Voltear
             </button>
           )}
-
-          {onOpenCameraRecorder && (
-            <button
-              onClick={onOpenCameraRecorder}
-              className="px-3 py-1.5 text-xs font-medium text-amber-200 bg-amber-950/90 hover:bg-amber-900 border border-amber-700/60 rounded-lg transition-colors flex items-center gap-1.5 whitespace-nowrap shrink-0"
-              title="Abrir grabadora de cámara con botón de voltear cámara"
-            >
-              <Video className="w-3.5 h-3.5 text-amber-400" />
-              Grabar Cámara
-            </button>
-          )}
-
-          <label className="cursor-pointer px-3 py-1.5 text-xs font-medium text-indigo-300 bg-indigo-950/90 hover:bg-indigo-900 border border-indigo-700/60 rounded-lg transition-colors flex items-center gap-1.5 whitespace-nowrap shrink-0">
-            <Upload className="w-3.5 h-3.5 text-indigo-400" />
-            Subir Video a 3D
-            <input type="file" accept="video/*" onChange={handleUploadVideoTo3D} className="hidden" />
-          </label>
 
           <button
             onClick={handleTake3DSnapshot}
-            className="px-3 py-1.5 text-xs font-medium text-sky-200 bg-sky-950/90 hover:bg-sky-900 border border-sky-700/60 rounded-lg transition-colors flex items-center gap-1.5 whitespace-nowrap shrink-0"
+            className="px-3 py-1.5 text-xs font-semibold text-amber-200 bg-slate-900 hover:bg-slate-800 border border-amber-500/35 rounded-lg transition-colors flex items-center gap-1.5 whitespace-nowrap shrink-0"
             title="Capturar foto del escenario 3D actual y agregarla como escena"
           >
-            {snapshotFeedback ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Camera className="w-3.5 h-3.5 text-sky-400" />}
+            {snapshotFeedback ? <Check className="w-3.5 h-3.5 text-amber-300" /> : <Camera className="w-3.5 h-3.5 text-amber-400" />}
             {snapshotFeedback ? '¡Foto 3D Guardada!' : 'Foto 3D'}
           </button>
 
           <button
             onClick={handleSave3DConfig}
-            className="px-3 py-1.5 text-xs font-medium text-emerald-300 bg-emerald-950/90 hover:bg-emerald-900 border border-emerald-700/60 rounded-lg transition-colors flex items-center gap-1.5 whitespace-nowrap shrink-0"
+            className="px-3 py-1.5 text-xs font-semibold text-amber-200 bg-slate-900 hover:bg-slate-800 border border-amber-500/35 rounded-lg transition-colors flex items-center gap-1.5 whitespace-nowrap shrink-0"
           >
-            {saveFeedback ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Save className="w-3.5 h-3.5 text-emerald-400" />}
-            {saveFeedback ? 'Guardado' : 'Save 3D'}
+            {saveFeedback ? <Check className="w-3.5 h-3.5 text-amber-300" /> : <Save className="w-3.5 h-3.5 text-amber-400" />}
+            {saveFeedback ? 'Guardado' : 'Guardar 3D'}
           </button>
 
           <button
@@ -1657,37 +1828,93 @@ export default function Studio3DScene({
                 onOpenCreate();
               }
             }}
-            className="px-3 py-1.5 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-500 rounded-lg transition-colors flex items-center gap-1.5 whitespace-nowrap shrink-0"
+            className="px-3 py-1.5 text-xs font-bold text-amber-200 bg-amber-500/20 hover:bg-amber-500/30 border border-amber-400/50 rounded-lg transition-colors flex items-center gap-1.5 whitespace-nowrap shrink-0"
             title="Crear un nuevo video usando este escenario 3D"
           >
-            <Plus className="w-3.5 h-3.5" />
-            Crear Video en Escenario
+            <Plus className="w-3.5 h-3.5 text-amber-300" />
+            Crear Video
           </button>
 
           <button
             onClick={onOpenDashboard}
-            className="px-3 py-1.5 text-xs font-medium text-slate-200 bg-slate-800 hover:bg-slate-700 rounded-lg transition-colors flex items-center gap-1.5 whitespace-nowrap shrink-0"
+            className="px-3 py-1.5 text-xs font-semibold text-amber-200 bg-slate-900 hover:bg-slate-800 border border-amber-500/35 rounded-lg transition-colors flex items-center gap-1.5 whitespace-nowrap shrink-0"
           >
-            <LayoutDashboard className="w-3.5 h-3.5 text-indigo-400" />
-            Proyectos
+            <LayoutDashboard className="w-3.5 h-3.5 text-amber-400" />
+            Tablero
           </button>
         </div>
       </header>
 
-      {/* Active Scene Text Creator & Silent Scenario Banner */}
+      {/* Active Scene Text Creator & Dynamic Video Background Control Strip */}
       {!isDockCollapsed && (
         <div
-          style={{ backgroundColor: 'rgba(11, 15, 25, 0.94)' }}
-          className="absolute top-20 left-1/2 -translate-x-1/2 z-10 max-w-2xl w-[92vw] px-4 py-3 rounded-xl border border-slate-800 pointer-events-auto space-y-2 shadow-xl"
+          style={{ backgroundColor: 'rgba(9, 12, 20, 0.94)' }}
+          className="absolute top-20 left-1/2 -translate-x-1/2 z-10 max-w-3xl w-[94vw] px-4 py-3 rounded-xl border border-amber-500/35 pointer-events-auto space-y-2.5 shadow-2xl"
         >
           <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
-            <span className="text-indigo-400 font-semibold font-mono tabular-nums flex items-center gap-1.5">
-              <VolumeX className="w-3.5 h-3.5 text-emerald-400" />
-              <span>Escenario Sin Voz (Solo Texto) · Escena {activeSceneIndex + 1}/{Math.max(1, localScenes.length)} · 3D: {subjectPreset.toUpperCase()}</span>
+            <span className="text-amber-300 font-semibold font-mono tabular-nums flex items-center gap-1.5">
+              <VolumeX className="w-3.5 h-3.5 text-amber-400" />
+              <span>
+                Escenario 3D Oro Imperial · Escena {activeSceneIndex + 1}/{Math.max(1, localScenes.length)} · 3D: {subjectPreset.toUpperCase()}
+              </span>
             </span>
-            <span className="text-[11px] text-emerald-400 font-mono font-semibold">
-              ● Auto 3D &amp; Escenarios Verificados 100%
-            </span>
+
+            {/* Dynamic Video Background Controls */}
+            <div className="flex flex-wrap items-center gap-1.5">
+              <span className="text-[11px] font-mono text-amber-400/90">Modo Fondo Video:</span>
+              {(
+                [
+                  { id: 'dome_and_wall', label: 'Domo 360° + LED' },
+                  { id: 'scene_backdrop', label: 'Fondo Completo' },
+                  { id: 'led_wall', label: 'Pantalla IMAX' },
+                ] as const
+              ).map((m) => (
+                <button
+                  key={m.id}
+                  type="button"
+                  onClick={() => setVideoBgMode(m.id)}
+                  className={`px-2 py-0.5 rounded text-[11px] font-semibold transition-colors ${
+                    videoBgMode === m.id
+                      ? 'bg-amber-400 text-slate-950 font-bold'
+                      : 'bg-slate-900 text-amber-300/80 border border-amber-500/25 hover:text-amber-200'
+                  }`}
+                >
+                  {m.label}
+                </button>
+              ))}
+
+              {uploaded3DVideoUrl && (
+                <>
+                  <div className="flex items-center gap-1 bg-slate-900 px-2 py-0.5 rounded border border-amber-500/25">
+                    <span className="text-[10px] font-mono text-amber-300">Brillo</span>
+                    <input
+                      type="range"
+                      min={0.2}
+                      max={1}
+                      step={0.05}
+                      value={videoBgOpacity}
+                      onChange={(e) => setVideoBgOpacity(parseFloat(e.target.value))}
+                      className="w-14 accent-amber-400 cursor-pointer"
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setIsVideoBgMuted((prev) => !prev)}
+                    className="px-2 py-0.5 rounded bg-slate-900 border border-amber-500/30 text-[11px] text-amber-300 hover:bg-slate-800"
+                  >
+                    {isVideoBgMuted ? 'Audio Video: Mute' : 'Audio Video: ON'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleClearVideoBackground}
+                    className="px-2 py-0.5 rounded bg-rose-950/90 border border-rose-500/40 text-[11px] text-rose-200 hover:bg-rose-900"
+                    title="Quitar el video de fondo y restaurar el fondo del estudio 3D"
+                  >
+                    Quitar Fondo
+                  </button>
+                </>
+              )}
+            </div>
           </div>
 
           <div className="flex items-center gap-2">
@@ -1698,17 +1925,17 @@ export default function Studio3DScene({
                 setScenarioTextInput(e.target.value);
                 stateRef.current.currentSceneText = e.target.value;
               }}
-              placeholder="Escribe el texto en pantalla para este escenario 3D..."
-              className="flex-1 bg-slate-900 border border-slate-700 focus:border-indigo-500 rounded-lg px-3 py-1.5 text-xs text-white outline-none"
+              placeholder="Escribe las letras doradas en pantalla para este escenario 3D..."
+              className="flex-1 bg-slate-950 border border-amber-500/35 focus:border-amber-400 rounded-lg px-3 py-1.5 text-xs text-amber-200 outline-none"
             />
             <button
               type="button"
               onClick={handleCreateScenarioText}
-              className="px-3.5 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold flex items-center gap-1.5 whitespace-nowrap shrink-0 transition-colors"
-              title="Crear y aplicar texto en pantalla al escenario 3D actual"
+              className="px-3.5 py-1.5 rounded-lg bg-gradient-to-r from-amber-400 to-yellow-500 hover:from-amber-300 hover:to-amber-400 text-slate-950 text-xs font-bold flex items-center gap-1.5 whitespace-nowrap shrink-0 transition-all"
+              title="Crear y aplicar letras color oro en pantalla al escenario 3D actual"
             >
-              {textFeedback ? <Check className="w-3.5 h-3.5 text-emerald-300" /> : <TypeIcon className="w-3.5 h-3.5" />}
-              <span>{textFeedback ? '¡Texto Aplicado!' : 'Crear Texto'}</span>
+              {textFeedback ? <Check className="w-3.5 h-3.5 text-slate-950" /> : <TypeIcon className="w-3.5 h-3.5 text-slate-950" />}
+              <span>{textFeedback ? '¡Letras Oro Aplicadas!' : 'Aplicar Texto Oro'}</span>
             </button>
           </div>
         </div>
@@ -1727,38 +1954,38 @@ export default function Studio3DScene({
       >
         <button
           onClick={() => setIsDockCollapsed((prev) => !prev)}
-          style={{ backgroundColor: 'rgba(15, 23, 42, 0.94)' }}
-          className="px-3.5 py-1 rounded-t-lg border border-b-0 border-slate-800 text-xs font-medium text-slate-300 hover:text-white flex items-center gap-1.5 transition-colors whitespace-nowrap"
+          style={{ backgroundColor: 'rgba(9, 12, 20, 0.94)' }}
+          className="px-3.5 py-1 rounded-t-lg border border-b-0 border-amber-500/35 text-xs font-semibold text-amber-300 hover:text-amber-200 flex items-center gap-1.5 transition-colors whitespace-nowrap"
         >
           {isDockCollapsed ? (
             <>
-              <ChevronUp className="w-3.5 h-3.5 text-indigo-400" />
-              Show Studio Controls (H)
+              <ChevronUp className="w-3.5 h-3.5 text-amber-400" />
+              Mostrar Controles 3D (H)
             </>
           ) : (
             <>
-              <ChevronDown className="w-3.5 h-3.5 text-indigo-400" />
-              Hide Controls (H)
+              <ChevronDown className="w-3.5 h-3.5 text-amber-400" />
+              Ocultar Controles (H)
             </>
           )}
         </button>
 
         {!isDockCollapsed && (
           <div
-            style={{ backgroundColor: 'rgba(11, 15, 25, 0.94)' }}
-            className="w-full rounded-xl border border-slate-800 px-4 py-3 text-slate-200 shadow-2xl flex flex-wrap items-center justify-between gap-3"
+            style={{ backgroundColor: 'rgba(9, 12, 20, 0.94)' }}
+            className="w-full rounded-xl border border-amber-500/35 px-4 py-3 text-amber-200 shadow-2xl flex flex-wrap items-center justify-between gap-3"
           >
             {/* 1. Preview Playback & 5 Stage 3D Scene Subjects */}
             <div className="flex items-center gap-2">
               <button
                 onClick={() => setIsPlaying((prev) => !prev)}
-                className="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-medium flex items-center gap-1.5 transition-colors whitespace-nowrap shrink-0"
+                className="px-3 py-1.5 rounded-lg bg-gradient-to-r from-amber-400 to-yellow-500 hover:from-amber-300 hover:to-amber-400 text-slate-950 text-xs font-bold flex items-center gap-1.5 transition-all whitespace-nowrap shrink-0"
               >
                 {isPlaying ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}
-                {isPlaying ? 'Pause Preview' : 'Preview 3D'}
+                {isPlaying ? 'Pausar 3D' : 'Reproducir 3D'}
               </button>
 
-              <div className="flex items-center gap-1 bg-slate-900 p-1 rounded-lg border border-slate-800">
+              <div className="flex items-center gap-1 bg-slate-950 p-1 rounded-lg border border-amber-500/30">
                 {(
                   [
                     { id: 'coupe', label: 'Cyber Coupe' },
@@ -1771,10 +1998,10 @@ export default function Studio3DScene({
                   <button
                     key={sub.id}
                     onClick={() => handleSelectSubject(sub.id)}
-                    className={`px-2.5 py-1 rounded text-xs font-medium transition-colors whitespace-nowrap shrink-0 ${
+                    className={`px-2.5 py-1 rounded text-xs font-semibold transition-colors whitespace-nowrap shrink-0 ${
                       subjectPreset === sub.id
-                        ? 'bg-slate-800 text-white'
-                        : 'text-slate-400 hover:text-slate-200'
+                        ? 'bg-amber-500/25 text-amber-200 border border-amber-400/50'
+                        : 'text-amber-400/70 hover:text-amber-200'
                     }`}
                   >
                     {sub.label}
@@ -1784,16 +2011,16 @@ export default function Studio3DScene({
             </div>
 
             {/* 2. Camera Angle Presets */}
-            <div className="flex items-center gap-1 bg-slate-900 p-1 rounded-lg border border-slate-800">
-              <Camera className="w-3.5 h-3.5 text-slate-400 ml-1.5 mr-1 shrink-0" />
+            <div className="flex items-center gap-1 bg-slate-950 p-1 rounded-lg border border-amber-500/30">
+              <Camera className="w-3.5 h-3.5 text-amber-400 ml-1.5 mr-1 shrink-0" />
               {(Object.keys(CAMERA_PRESETS) as CameraPresetId[]).map((presetKey) => (
                 <button
                   key={presetKey}
                   onClick={() => triggerCameraPreset(presetKey)}
-                  className={`px-2.5 py-1 rounded text-xs font-medium transition-colors whitespace-nowrap shrink-0 ${
+                  className={`px-2.5 py-1 rounded text-xs font-semibold transition-colors whitespace-nowrap shrink-0 ${
                     cameraPreset === presetKey
-                      ? 'bg-indigo-600 text-white'
-                      : 'text-slate-400 hover:text-slate-200'
+                      ? 'bg-amber-400 text-slate-950 font-bold'
+                      : 'text-amber-400/70 hover:text-amber-200'
                   }`}
                 >
                   {CAMERA_PRESETS[presetKey].label}
@@ -1803,16 +2030,16 @@ export default function Studio3DScene({
 
             {/* 3. Surface Finish & Lighting Mood */}
             <div className="flex items-center gap-2">
-              <div className="flex items-center gap-1 bg-slate-900 p-1 rounded-lg border border-slate-800">
+              <div className="flex items-center gap-1 bg-slate-950 p-1 rounded-lg border border-amber-500/30">
                 <Sparkles className="w-3.5 h-3.5 text-amber-400 ml-1.5 mr-1 shrink-0" />
                 {(Object.keys(FINISH_PRESETS) as FinishPresetId[]).map((fKey) => (
                   <button
                     key={fKey}
                     onClick={() => setFinishPreset(fKey)}
-                    className={`px-2 py-1 rounded text-xs font-medium transition-colors whitespace-nowrap shrink-0 ${
+                    className={`px-2 py-1 rounded text-xs font-semibold transition-colors whitespace-nowrap shrink-0 ${
                       finishPreset === fKey
-                        ? 'bg-slate-800 text-white'
-                        : 'text-slate-400 hover:text-slate-200'
+                        ? 'bg-amber-500/25 text-amber-200 border border-amber-400/50'
+                        : 'text-amber-400/70 hover:text-amber-200'
                     }`}
                   >
                     {FINISH_PRESETS[fKey].label.split(' ')[1]}
@@ -1820,16 +2047,16 @@ export default function Studio3DScene({
                 ))}
               </div>
 
-              <div className="flex items-center gap-1 bg-slate-900 p-1 rounded-lg border border-slate-800">
-                <Sun className="w-3.5 h-3.5 text-sky-400 ml-1.5 mr-1 shrink-0" />
+              <div className="flex items-center gap-1 bg-slate-950 p-1 rounded-lg border border-amber-500/30">
+                <Sun className="w-3.5 h-3.5 text-amber-400 ml-1.5 mr-1 shrink-0" />
                 {(Object.keys(LIGHTING_PRESETS) as LightingPresetId[]).map((lKey) => (
                   <button
                     key={lKey}
                     onClick={() => setLightingPreset(lKey)}
-                    className={`px-2 py-1 rounded text-xs font-medium transition-colors whitespace-nowrap shrink-0 ${
+                    className={`px-2 py-1 rounded text-xs font-semibold transition-colors whitespace-nowrap shrink-0 ${
                       lightingPreset === lKey
-                        ? 'bg-slate-800 text-white'
-                        : 'text-slate-400 hover:text-slate-200'
+                        ? 'bg-amber-500/25 text-amber-200 border border-amber-400/50'
+                        : 'text-amber-400/70 hover:text-amber-200'
                     }`}
                   >
                     {LIGHTING_PRESETS[lKey].label.split(' ')[0]}
@@ -1839,9 +2066,9 @@ export default function Studio3DScene({
             </div>
 
             {/* 4. Exploded Rig Slider */}
-            <div className="flex items-center gap-2 bg-slate-900 px-3 py-1.5 rounded-lg border border-slate-800">
-              <Layers className="w-3.5 h-3.5 text-indigo-400 shrink-0" />
-              <span className="text-xs font-medium text-slate-300 whitespace-nowrap">Explode</span>
+            <div className="flex items-center gap-2 bg-slate-950 px-3 py-1.5 rounded-lg border border-amber-500/30">
+              <Layers className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+              <span className="text-xs font-semibold text-amber-200 whitespace-nowrap">Explode</span>
               <input
                 type="range"
                 min={0}
@@ -1849,9 +2076,9 @@ export default function Studio3DScene({
                 step={0.01}
                 value={explodedFactor}
                 onChange={(e) => setExplodedFactor(parseFloat(e.target.value))}
-                className="w-20 accent-indigo-500 cursor-pointer"
+                className="w-20 accent-amber-400 cursor-pointer"
               />
-              <span className="text-xs font-mono tabular-nums text-slate-400 w-8 text-right">
+              <span className="text-xs font-mono tabular-nums text-amber-300 w-8 text-right">
                 {Math.round(explodedFactor * 100)}%
               </span>
             </div>
@@ -1861,3 +2088,4 @@ export default function Studio3DScene({
     </div>
   );
 }
+

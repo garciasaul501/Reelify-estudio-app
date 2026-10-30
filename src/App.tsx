@@ -64,7 +64,8 @@ import {
   FileText,
   Type as TypeIcon,
   VolumeX,
-  Car
+  Car,
+  GripVertical
 } from 'lucide-react';
 import { motion } from 'motion/react';
 import Studio3DScene, { SubjectPresetId, SceneItem } from './components/Studio3DScene';
@@ -1034,22 +1035,28 @@ const ProceduralVideoCanvas = ({
 
       ctx.restore();
 
-      // Cinema letterbox bar & Storyboard HUD metadata (Silent Scenario + On-Screen Text)
-      ctx.fillStyle = 'rgba(9, 13, 22, 0.88)';
+      // Cinema letterbox bar & Storyboard HUD metadata (Silent Scenario + Gold On-Screen Text)
+      ctx.fillStyle = 'rgba(7, 9, 14, 0.90)';
       ctx.fillRect(0, h - 80, w, 80);
+      ctx.strokeStyle = 'rgba(245, 208, 97, 0.55)';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.moveTo(0, h - 80);
+      ctx.lineTo(w, h - 80);
+      ctx.stroke();
 
-      ctx.fillStyle = '#38bdf8';
-      ctx.font = '600 12px monospace';
+      ctx.fillStyle = '#fbbf24';
+      ctx.font = '600 12px "JetBrains Mono", monospace';
       const presetBadge = activeScene.scene3dPreset ? ` · 3D: ${activeScene.scene3dPreset.toUpperCase()}` : '';
       const filterBadge = activeFilterPreset.id !== 'none' ? ` · FILTER: ${activeFilterPreset.label.toUpperCase()}` : '';
       ctx.fillText(
-        `ESCENA ${sceneIdx + 1}/${scenes.length} (${activeScene.duration}) · SIN VOZ · TEXTO EN PANTALLA${presetBadge}${filterBadge}`,
+        `EDICIÓN ORO · ESCENA ${sceneIdx + 1}/${scenes.length} (${activeScene.duration}) · TEXTO EN PANTALLA${presetBadge}${filterBadge}`,
         22,
         h - 50
       );
 
-      ctx.fillStyle = '#ffffff';
-      ctx.font = 'bold 15px sans-serif';
+      ctx.fillStyle = '#fde047';
+      ctx.font = 'bold 15px "Cinzel", Georgia, serif';
       const rawText =
         activeScene.overlayText ||
         video.customTextOverlay ||
@@ -1094,7 +1101,12 @@ const Sidebar = ({
   onCreateInFolder,
   onCreateInScenario,
   onOpenCameraRecorder,
-  onOpenRegistrationModal
+  onOpenRegistrationModal,
+  draggingVideoCount = 0,
+  dragOverFolder = null,
+  onDragOverFolder,
+  onDragLeaveFolder,
+  onDropToFolder
 }: { 
   activeTab: string; 
   setActiveTab: (t: string) => void; 
@@ -1111,6 +1123,11 @@ const Sidebar = ({
   onCreateInScenario: (preset: SubjectPresetId) => void;
   onOpenCameraRecorder: () => void;
   onOpenRegistrationModal: () => void;
+  draggingVideoCount?: number;
+  dragOverFolder?: string | null;
+  onDragOverFolder?: (folderName: string, e: React.DragEvent) => void;
+  onDragLeaveFolder?: () => void;
+  onDropToFolder?: (folderName: string, e: React.DragEvent) => void;
 }) => (
   <aside className="w-64 bg-slate-900 text-slate-300 border-r border-slate-800 flex flex-col shrink-0">
     <div className="p-6">
@@ -1238,20 +1255,39 @@ const Sidebar = ({
         </div>
       </div>
 
-      {/* Folders List + Create Video in Folder Button in Sidebar */}
+      {/* Folders List + Drag & Drop Target + Create Video in Folder Button in Sidebar */}
       <div>
         <div className="px-4 mb-2 flex items-center justify-between">
-          <span className="text-xs font-semibold text-slate-500 tracking-wider">Folders</span>
+          <span className="text-xs font-semibold text-slate-500 tracking-wider">
+            {draggingVideoCount > 0 ? 'Suelta aquí en Carpeta' : 'Folders'}
+          </span>
           <span className="text-xs text-slate-500 font-mono tabular-nums">{folders.length}</span>
         </div>
         <div className="space-y-0.5">
           {folders.map((f) => {
             const isActive = activeTab === 'dashboard' && selectedFolder === f.name;
+            const isDropTarget = dragOverFolder === `sidebar:${f.name}`;
             return (
               <div
                 key={f.name}
-                className={`flex items-center justify-between px-2 py-1 rounded-lg transition-colors group ${
-                  isActive ? 'bg-slate-800 text-white font-medium' : 'text-slate-400 hover:bg-slate-800/60 hover:text-slate-200'
+                onDragOver={(e) => {
+                  e.preventDefault();
+                  e.dataTransfer.dropEffect = 'move';
+                  onDragOverFolder?.(`sidebar:${f.name}`, e);
+                }}
+                onDragLeave={() => onDragLeaveFolder?.()}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  onDropToFolder?.(f.name, e);
+                }}
+                className={`flex items-center justify-between px-2 py-1 rounded-lg transition-all group ${
+                  isDropTarget
+                    ? 'bg-indigo-600 text-white ring-2 ring-indigo-400 scale-[1.02]'
+                    : draggingVideoCount > 0
+                    ? 'border border-dashed border-indigo-500/50 bg-slate-800/80 text-indigo-200'
+                    : isActive
+                    ? 'bg-slate-800 text-white font-medium'
+                    : 'text-slate-400 hover:bg-slate-800/60 hover:text-slate-200'
                 }`}
               >
                 <button
@@ -1262,19 +1298,29 @@ const Sidebar = ({
                   }}
                   className="flex-1 flex items-center gap-2.5 px-2 py-1 text-sm text-left min-w-0"
                 >
-                  <Folder className={`w-4 h-4 shrink-0 ${isActive ? 'text-indigo-400' : 'text-slate-500'}`} />
+                  <Folder
+                    className={`w-4 h-4 shrink-0 ${
+                      isDropTarget ? 'text-white' : isActive ? 'text-indigo-400' : 'text-slate-500'
+                    }`}
+                  />
                   <span className="truncate">{f.name}</span>
-                  <span className="text-xs text-slate-500 font-mono tabular-nums shrink-0">({f.count})</span>
+                  <span className="text-xs text-slate-400 font-mono tabular-nums shrink-0">({f.count})</span>
                 </button>
-                <button
-                  type="button"
-                  onClick={() => onCreateInFolder(f.name)}
-                  className="px-1.5 py-0.5 rounded bg-indigo-600/20 hover:bg-indigo-600 text-indigo-300 hover:text-white text-[10px] font-semibold flex items-center gap-0.5 shrink-0 transition-colors"
-                  title={`Crear video en la carpeta "${f.name}"`}
-                >
-                  <Plus className="w-3 h-3" />
-                  Crear
-                </button>
+                {isDropTarget ? (
+                  <span className="px-1.5 py-0.5 rounded bg-white/20 text-white text-[10px] font-bold shrink-0">
+                    Soltar
+                  </span>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => onCreateInFolder(f.name)}
+                    className="px-1.5 py-0.5 rounded bg-indigo-600/20 hover:bg-indigo-600 text-indigo-300 hover:text-white text-[10px] font-semibold flex items-center gap-0.5 shrink-0 transition-colors"
+                    title={`Crear video en la carpeta "${f.name}"`}
+                  >
+                    <Plus className="w-3 h-3" />
+                    Crear
+                  </button>
+                )}
               </div>
             );
           })}
@@ -1327,6 +1373,9 @@ const VideoCard = ({
   existingFolders,
   isSelectedForMerge,
   isLiked,
+  isDragging = false,
+  onDragStartVideo,
+  onDragEndVideo,
   onToggleLike,
   onToggleSelectForMerge,
   onUpdateFolder,
@@ -1340,6 +1389,9 @@ const VideoCard = ({
   existingFolders: string[];
   isSelectedForMerge: boolean;
   isLiked: boolean;
+  isDragging?: boolean;
+  onDragStartVideo?: (video: VideoProject, e: React.DragEvent<HTMLDivElement>) => void;
+  onDragEndVideo?: () => void;
   onToggleLike: (videoId: string) => void;
   onToggleSelectForMerge: (video: VideoProject) => void;
   onUpdateFolder: (videoId: string, newFolder: string) => Promise<void>;
@@ -1415,14 +1467,25 @@ const VideoCard = ({
     <motion.div 
       layout
       initial={{ opacity: 0, y: 20 }}
-      animate={{ opacity: 1, y: 0 }}
+      animate={{ opacity: isDragging ? 0.55 : 1, y: 0, scale: isDragging ? 0.97 : 1 }}
+      draggable={!isEditingFolder}
+      onDragStart={(e) => {
+        onDragStartVideo?.(video, e as unknown as React.DragEvent<HTMLDivElement>);
+      }}
+      onDragEnd={() => {
+        onDragEndVideo?.();
+      }}
       onMouseEnter={() => setIsHovered(true)}
       onMouseLeave={() => {
         setIsHovered(false);
         setIsConfirmingDelete(false);
       }}
-      className={`bg-white border rounded-xl overflow-hidden transition-all group flex flex-col ${
-        isSelectedForMerge ? 'border-indigo-600 ring-2 ring-indigo-500/20' : 'border-slate-200 hover:border-slate-300'
+      className={`bg-white border rounded-xl overflow-hidden transition-all group flex flex-col cursor-grab active:cursor-grabbing ${
+        isDragging
+          ? 'border-indigo-600 ring-4 ring-indigo-500/30 shadow-xl'
+          : isSelectedForMerge
+          ? 'border-indigo-600 ring-2 ring-indigo-500/20'
+          : 'border-slate-200 hover:border-slate-300'
       }`}
     >
       <div 
@@ -1484,15 +1547,24 @@ const VideoCard = ({
           </button>
         </div>
 
-        <div className="absolute top-2.5 right-2.5 px-2 py-0.5 rounded bg-slate-950/80 text-white text-[11px] font-mono flex items-center gap-1.5">
-          <Layers className="w-3 h-3 text-indigo-400" />
-          <span>{sceneCount} esc</span>
-          {imageCount > 0 && (
-            <>
-              <span>·</span>
-              <span>{imageCount} img</span>
-            </>
-          )}
+        <div className="absolute top-2.5 right-2.5 flex items-center gap-1.5">
+          <div
+            className="px-2 py-0.5 rounded bg-indigo-600/90 text-white text-[10px] font-semibold flex items-center gap-1 shadow-xs"
+            title="Arrastra esta tarjeta y suéltala sobre cualquier carpeta para mover el video"
+          >
+            <GripVertical className="w-3 h-3" />
+            <span>Arrastrar</span>
+          </div>
+          <div className="px-2 py-0.5 rounded bg-slate-950/80 text-white text-[11px] font-mono flex items-center gap-1.5">
+            <Layers className="w-3 h-3 text-indigo-400" />
+            <span>{sceneCount} esc</span>
+            {imageCount > 0 && (
+              <>
+                <span>·</span>
+                <span>{imageCount} img</span>
+              </>
+            )}
+          </div>
         </div>
       </div>
 
@@ -3960,6 +4032,11 @@ export default function App() {
   const [voiceStatusText, setVoiceStatusText] = useState<string | null>(null);
   const liveWsRef = useRef<WebSocket | null>(null);
 
+  // Drag-and-Drop state for moving videos between folders on the main dashboard
+  const [draggingVideoIds, setDraggingVideoIds] = useState<string[]>([]);
+  const [dragOverFolder, setDragOverFolder] = useState<string | null>(null);
+  const [newDropFolderInput, setNewDropFolderInput] = useState('');
+
   // Free Business Registration State (Directed to https://whop.com/@saulmente)
   const [localRegistrations, setLocalRegistrations] = useState<FreeBusinessRegistration[]>(() =>
     loadLocalRegistrations()
@@ -4928,6 +5005,77 @@ export default function App() {
     }
   };
 
+  // --- DRAG AND DROP HANDLERS FOR MOVING VIDEOS BETWEEN FOLDERS ---
+  const handleDragStartVideo = (video: VideoProject, e: React.DragEvent<HTMLDivElement>) => {
+    const idsToMove =
+      selectedVideoIdsForMerge.includes(video.id) && selectedVideoIdsForMerge.length > 0
+        ? selectedVideoIdsForMerge
+        : [video.id];
+    setDraggingVideoIds(idsToMove);
+    try {
+      e.dataTransfer.effectAllowed = 'move';
+      e.dataTransfer.setData('application/json', JSON.stringify(idsToMove));
+      e.dataTransfer.setData('text/plain', video.id);
+    } catch {
+      // ignore dataTransfer restrictions in some environments
+    }
+  };
+
+  const handleDragEndVideo = () => {
+    setDraggingVideoIds([]);
+    setDragOverFolder(null);
+  };
+
+  const handleDropVideosToFolder = async (targetFolderRaw: string, e?: React.DragEvent) => {
+    if (e) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
+    const cleanFolder = (targetFolderRaw.trim() || 'Uncategorized').slice(0, 100);
+
+    let idsToMove = [...draggingVideoIds];
+    if (idsToMove.length === 0 && e?.dataTransfer) {
+      try {
+        const rawJson = e.dataTransfer.getData('application/json');
+        if (rawJson) {
+          const parsed = JSON.parse(rawJson);
+          if (Array.isArray(parsed)) idsToMove = parsed;
+        }
+        if (idsToMove.length === 0) {
+          const singleId = e.dataTransfer.getData('text/plain');
+          if (singleId) idsToMove = [singleId];
+        }
+      } catch {
+        // fallback
+      }
+    }
+
+    setDraggingVideoIds([]);
+    setDragOverFolder(null);
+
+    if (idsToMove.length === 0) return;
+
+    if (cleanFolder !== 'Uncategorized' && !customFolders.includes(cleanFolder)) {
+      setCustomFolders((prev) => (prev.includes(cleanFolder) ? prev : [...prev, cleanFolder]));
+    }
+
+    for (const vidId of idsToMove) {
+      await handleUpdateVideoFolder(vidId, cleanFolder);
+    }
+
+    if (idsToMove.length === 1) {
+      const movedVid = videos.find((v) => v.id === idsToMove[0]);
+      setSaveBannerMessage(
+        `¡Video "${movedVid?.title || 'Proyecto'}" movido a la carpeta "${cleanFolder}"!`
+      );
+    } else {
+      setSaveBannerMessage(
+        `¡${idsToMove.length} videos movidos a la carpeta "${cleanFolder}"!`
+      );
+    }
+    setTimeout(() => setSaveBannerMessage(null), 3500);
+  };
+
   const handleUpdateVideoImages = async (videoId: string, newImages: string[]) => {
     if (!newImages || newImages.length === 0) return;
     const primaryRef = newImages[0];
@@ -5115,6 +5263,32 @@ export default function App() {
     } finally {
       setIsCompressingImages(false);
     }
+  };
+
+  // Upload a video file (.mp4 / .webm / .mov) directly as the Dynamic Background for the 3D Studio
+  const handleUploadDynamicBgVideoFor3D = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setError(null);
+    const cleanTitle = file.name.replace(/\.[^.]+$/, '') || 'Fondo Dinámico 3D';
+    const objUrl = URL.createObjectURL(file);
+    setUploadedVideoObjectUrl(objUrl);
+    setUploadedVideoName(file.name);
+
+    const baseProj = activeStudioProject || videos[0] || buildDraftVideoProject();
+    const updatedProj: VideoProject = {
+      ...baseProj,
+      title: `${cleanTitle} · Estudio 3D Oro`,
+      videoData: objUrl,
+      mimeType: file.type || 'video/mp4',
+    };
+    setActiveStudioProject(updatedProj);
+    setSaveBannerMessage(
+      `¡Video "${file.name}" aplicado como Fondo Dinámico del Estudio 3D!`
+    );
+    setTimeout(() => setSaveBannerMessage(null), 4000);
+    setActiveTab('studio3d');
+    e.target.value = '';
   };
 
   // Upload a video file (.mp4 / .webm / .mov) to extract multi-scene frames & project in 3D Stage!
@@ -5564,7 +5738,7 @@ export default function App() {
   }
 
   return (
-    <div className="min-h-screen bg-slate-50 flex">
+    <div className="min-h-screen bg-[#07090e] text-[#f5d061] gold-theme-app flex">
       <Sidebar 
         activeTab={activeTab} 
         setActiveTab={setActiveTab} 
@@ -5587,6 +5761,11 @@ export default function App() {
           })
         }
         onOpenRegistrationModal={() => setIsRegistrationModalOpen(true)}
+        draggingVideoCount={draggingVideoIds.length}
+        dragOverFolder={dragOverFolder}
+        onDragOverFolder={(folderKey) => setDragOverFolder(folderKey)}
+        onDragLeaveFolder={() => setDragOverFolder(null)}
+        onDropToFolder={(folderNameTarget, e) => handleDropVideosToFolder(folderNameTarget, e)}
       />
 
       {/* Hidden anchor used to direct every completed registration immediately to https://whop.com/@saulmente */}
@@ -6258,6 +6437,19 @@ export default function App() {
                     </p>
                   </div>
                   <div className="flex flex-wrap items-center gap-2 self-start sm:self-auto">
+                    <label
+                      className="cursor-pointer px-3.5 py-1.5 rounded-lg btn-gold-luxury text-xs font-extrabold flex items-center gap-1.5 whitespace-nowrap"
+                      title="Subir archivo de video (.mp4, .webm, .mov) y usarlo como Fondo Dinámico del Estudio 3D"
+                    >
+                      <Upload className="w-4 h-4" />
+                      <span>Subir Video de Fondo 3D</span>
+                      <input
+                        type="file"
+                        accept="video/*,.mp4,.webm,.mov"
+                        onChange={handleUploadDynamicBgVideoFor3D}
+                        className="hidden"
+                      />
+                    </label>
                     <button
                       onClick={() => handleLaunch3DPreset('coupe', 'Cyber Coupe 3D Production')}
                       className="px-3.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-xs font-bold text-white flex items-center gap-1.5 whitespace-nowrap"
@@ -6431,17 +6623,99 @@ export default function App() {
                 </div>
               </div>
 
-              {folderList.length > 0 && (
-                <div className="flex items-center gap-2 overflow-x-auto pb-4 mb-6 border-b border-slate-200">
+              {/* Interactive Drag-and-Drop Folder Zone on Main Dashboard */}
+              <div
+                className={`mb-6 rounded-2xl border-2 p-4 transition-all ${
+                  draggingVideoIds.length > 0
+                    ? 'bg-indigo-50/90 border-indigo-500 shadow-md ring-4 ring-indigo-500/15'
+                    : 'bg-white border-slate-200'
+                }`}
+              >
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-3">
+                  <div className="flex items-center gap-2">
+                    <div
+                      className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${
+                        draggingVideoIds.length > 0
+                          ? 'bg-indigo-600 text-white animate-pulse'
+                          : 'bg-indigo-50 text-indigo-600'
+                      }`}
+                    >
+                      <Folder className="w-4 h-4" />
+                    </div>
+                    <div>
+                      <h3 className="text-xs sm:text-sm font-bold text-slate-900 flex items-center gap-2">
+                        <span>Arrastrar y Soltar para Mover Videos entre Carpetas</span>
+                        {draggingVideoIds.length > 0 && (
+                          <span className="px-2 py-0.5 rounded-md bg-indigo-600 text-white text-[11px] font-mono">
+                            Arrastrando {draggingVideoIds.length}{' '}
+                            {draggingVideoIds.length === 1 ? 'video' : 'videos'} · Suelta en una carpeta abajo
+                          </span>
+                        )}
+                      </h3>
+                      <p className="text-[11px] text-slate-500">
+                        Arrastra cualquier tarjeta de video y suéltala sobre una carpeta de esta barra, de las secciones inferiores o del menú lateral para moverla al instante.
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Quick Drop into New Custom Folder */}
+                  <div
+                    onDragOver={(e) => {
+                      e.preventDefault();
+                      e.dataTransfer.dropEffect = 'move';
+                      setDragOverFolder('new-folder-drop');
+                    }}
+                    onDragLeave={() => setDragOverFolder(null)}
+                    onDrop={(e) => {
+                      const targetNew = newDropFolderInput.trim() || `Nueva Carpeta ${folderList.length + 1}`;
+                      handleDropVideosToFolder(targetNew, e);
+                      setNewDropFolderInput('');
+                    }}
+                    className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl border-2 border-dashed transition-all ${
+                      dragOverFolder === 'new-folder-drop'
+                        ? 'border-emerald-500 bg-emerald-50 text-emerald-900 scale-[1.02]'
+                        : 'border-slate-300 bg-slate-50 text-slate-700'
+                    }`}
+                  >
+                    <FolderPlus className="w-4 h-4 text-indigo-600 shrink-0" />
+                    <input
+                      type="text"
+                      value={newDropFolderInput}
+                      onChange={(e) => setNewDropFolderInput(e.target.value)}
+                      placeholder="Nombre carpeta nueva y suelta aquí..."
+                      className="text-xs bg-transparent focus:outline-none w-48 sm:w-56 text-slate-800 placeholder:text-slate-400"
+                    />
+                    {newDropFolderInput.trim() && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const trimmed = newDropFolderInput.trim();
+                          if (!customFolders.includes(trimmed)) {
+                            setCustomFolders((prev) => [...prev, trimmed]);
+                          }
+                          setNewDropFolderInput('');
+                          setSaveBannerMessage(`Carpeta "${trimmed}" creada. Ya puedes arrastrar videos a ella.`);
+                          setTimeout(() => setSaveBannerMessage(null), 3000);
+                        }}
+                        className="px-2 py-0.5 rounded bg-indigo-600 hover:bg-indigo-700 text-white text-[11px] font-semibold"
+                      >
+                        Crear
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2 overflow-x-auto pb-1">
                   <button
+                    type="button"
                     onClick={() => {
                       setSelectedFolder('all');
                       setShowOnlyLiked(false);
                     }}
-                    className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-colors whitespace-nowrap shrink-0 ${
+                    className={`px-3 py-2 text-xs font-medium rounded-xl transition-colors whitespace-nowrap shrink-0 ${
                       selectedFolder === 'all' && !showOnlyLiked
                         ? 'bg-slate-900 text-white'
-                        : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-100'
+                        : 'bg-slate-100 border border-slate-200 text-slate-700 hover:bg-slate-200'
                     }`}
                   >
                     Todos ({videos.length})
@@ -6449,50 +6723,74 @@ export default function App() {
                   <button
                     type="button"
                     onClick={() => setShowOnlyLiked((prev) => !prev)}
-                    className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors whitespace-nowrap shrink-0 flex items-center gap-1.5 border ${
+                    className={`px-3 py-2 text-xs font-semibold rounded-xl transition-colors whitespace-nowrap shrink-0 flex items-center gap-1.5 border ${
                       showOnlyLiked
                         ? 'bg-pink-600 text-white border-pink-600'
-                        : 'bg-white border-pink-200 text-pink-600 hover:bg-pink-50'
+                        : 'bg-pink-50/60 border-pink-200 text-pink-600 hover:bg-pink-100'
                     }`}
                   >
                     <Heart className={`w-3.5 h-3.5 ${showOnlyLiked ? 'fill-white text-white' : 'fill-pink-500 text-pink-500'}`} />
                     Mis Gustas ({likedVideosCount})
                   </button>
-                  {folderList.map((f) => (
-                    <div
-                      key={f.name}
-                      className={`inline-flex items-center rounded-lg border transition-colors shrink-0 overflow-hidden ${
-                        selectedFolder === f.name
-                          ? 'bg-indigo-600 text-white border-indigo-600'
-                          : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
-                      }`}
-                    >
-                      <button
-                        type="button"
-                        onClick={() => setSelectedFolder(f.name)}
-                        className="px-3 py-1.5 text-xs font-medium flex items-center gap-1.5 whitespace-nowrap"
-                      >
-                        <Folder className="w-3.5 h-3.5" />
-                        <span>{f.name}</span>
-                        <span className="opacity-75 font-mono tabular-nums">({f.count})</span>
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => handleStartCreateInTarget({ folder: f.name })}
-                        className={`px-2 py-1.5 text-[11px] font-bold border-l flex items-center gap-0.5 transition-colors ${
-                          selectedFolder === f.name
-                            ? 'border-indigo-500 hover:bg-indigo-700 text-white'
-                            : 'border-slate-200 hover:bg-indigo-50 text-indigo-600'
+
+                  {folderList.map((f) => {
+                    const isHoveredDrop = dragOverFolder === `chip:${f.name}`;
+                    const isSelectedChip = selectedFolder === f.name;
+                    return (
+                      <div
+                        key={f.name}
+                        onDragOver={(e) => {
+                          e.preventDefault();
+                          e.dataTransfer.dropEffect = 'move';
+                          setDragOverFolder(`chip:${f.name}`);
+                        }}
+                        onDragLeave={() => setDragOverFolder(null)}
+                        onDrop={(e) => handleDropVideosToFolder(f.name, e)}
+                        className={`inline-flex items-center rounded-xl border-2 transition-all shrink-0 overflow-hidden ${
+                          isHoveredDrop
+                            ? 'bg-emerald-600 text-white border-emerald-500 ring-4 ring-emerald-500/30 scale-105 shadow-md'
+                            : draggingVideoIds.length > 0
+                            ? 'bg-indigo-50 border-dashed border-indigo-400 text-indigo-900 hover:bg-indigo-100'
+                            : isSelectedChip
+                            ? 'bg-indigo-600 text-white border-indigo-600'
+                            : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'
                         }`}
-                        title={`Crear video en la carpeta "${f.name}"`}
                       >
-                        <Plus className="w-3 h-3" />
-                        Crear
-                      </button>
-                    </div>
-                  ))}
+                        <button
+                          type="button"
+                          onClick={() => setSelectedFolder(f.name)}
+                          className="px-3 py-2 text-xs font-semibold flex items-center gap-1.5 whitespace-nowrap"
+                          title={`Ver carpeta "${f.name}" o suelta un video aquí para moverlo`}
+                        >
+                          <Folder className="w-3.5 h-3.5" />
+                          <span>{f.name}</span>
+                          <span className="opacity-75 font-mono tabular-nums">({f.count})</span>
+                          {isHoveredDrop && (
+                            <span className="ml-1 px-1.5 py-0.5 rounded bg-white text-emerald-800 text-[10px] font-extrabold">
+                              ¡Soltar Aquí!
+                            </span>
+                          )}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleStartCreateInTarget({ folder: f.name })}
+                          className={`px-2 py-2 text-[11px] font-bold border-l flex items-center gap-0.5 transition-colors ${
+                            isHoveredDrop
+                              ? 'border-emerald-400 text-white'
+                              : isSelectedChip
+                              ? 'border-indigo-500 hover:bg-indigo-700 text-white'
+                              : 'border-slate-200 hover:bg-indigo-50 text-indigo-600'
+                          }`}
+                          title={`Crear video en la carpeta "${f.name}"`}
+                        >
+                          <Plus className="w-3 h-3" />
+                          Crear
+                        </button>
+                      </div>
+                    );
+                  })}
                 </div>
-              )}
+              </div>
 
               {error && (
                 <div className="mb-6 p-4 bg-amber-50 border border-amber-200 rounded-xl flex items-center justify-between gap-3 text-amber-800 text-sm">
@@ -6519,61 +6817,46 @@ export default function App() {
                 />
               ) : groupByFolder ? (
                 <div className="space-y-10">
-                  {groupedVideos.map(([folderGroup, groupVids]) => (
-                    <section key={folderGroup} className="space-y-4">
-                      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 pb-2.5">
-                        <div className="flex items-center gap-2.5">
-                          <Folder className="w-5 h-5 text-indigo-600" />
-                          <h3 className="text-base font-semibold text-slate-900">{folderGroup}</h3>
-                          <span className="text-xs text-slate-400 font-mono tabular-nums">
-                            · {groupVids.length} {groupVids.length === 1 ? 'project' : 'projects'}
-                          </span>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <button
-                            type="button"
-                            onClick={() =>
-                              handleStartCreateInTarget({
-                                folder: folderGroup,
-                                openCamera: true,
-                              })
-                            }
-                            className="px-2.5 py-1 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-600 text-xs font-semibold flex items-center gap-1 whitespace-nowrap transition-colors"
-                          >
-                            <Camera className="w-3.5 h-3.5" />
-                            Grabar en Carpeta
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() =>
-                              handleStartCreateInTarget({
-                                folder: folderGroup === 'Uncategorized' ? '' : folderGroup,
-                              })
-                            }
-                            className="px-3 py-1 rounded-lg bg-indigo-50 hover:bg-indigo-100 text-indigo-600 hover:text-indigo-700 text-xs font-semibold flex items-center gap-1 whitespace-nowrap transition-colors"
-                          >
-                            <Plus className="w-3.5 h-3.5" />
-                            Crear Video en "{folderGroup}"
-                          </button>
-                        </div>
-                      </div>
-
-                      {groupVids.length === 0 ? (
-                        <div className="py-8 px-4 text-center bg-white border border-dashed border-slate-200 rounded-xl text-xs text-slate-400 space-y-3">
-                          <p>Esta carpeta está vacía. Crea un video nuevo o graba con tu cámara directamente aquí.</p>
-                          <div className="flex items-center justify-center gap-2">
-                            <button
-                              type="button"
-                              onClick={() =>
-                                handleStartCreateInTarget({
-                                  folder: folderGroup === 'Uncategorized' ? '' : folderGroup,
-                                })
-                              }
-                              className="px-3.5 py-1.5 rounded-lg bg-indigo-600 text-white font-semibold hover:bg-indigo-700 inline-flex items-center gap-1.5"
-                            >
-                              <Plus className="w-3.5 h-3.5" />
-                              Crear Video Aquí
-                            </button>
+                  {groupedVideos.map(([folderGroup, groupVids]) => {
+                    const isSectionDropTarget = dragOverFolder === `section:${folderGroup}`;
+                    return (
+                      <section
+                        key={folderGroup}
+                        onDragOver={(e) => {
+                          e.preventDefault();
+                          e.dataTransfer.dropEffect = 'move';
+                          if (dragOverFolder !== `section:${folderGroup}`) {
+                            setDragOverFolder(`section:${folderGroup}`);
+                          }
+                        }}
+                        onDragLeave={(e) => {
+                          if (!e.currentTarget.contains(e.relatedTarget as Node)) {
+                            setDragOverFolder(null);
+                          }
+                        }}
+                        onDrop={(e) => handleDropVideosToFolder(folderGroup, e)}
+                        className={`space-y-4 rounded-2xl p-4 -mx-4 transition-all ${
+                          isSectionDropTarget
+                            ? 'bg-indigo-50/80 ring-2 ring-indigo-500 border border-indigo-400'
+                            : draggingVideoIds.length > 0
+                            ? 'border border-dashed border-indigo-300 bg-slate-100/50'
+                            : ''
+                        }`}
+                      >
+                        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 pb-2.5">
+                          <div className="flex items-center gap-2.5">
+                            <Folder className={`w-5 h-5 ${isSectionDropTarget ? 'text-indigo-700 animate-bounce' : 'text-indigo-600'}`} />
+                            <h3 className="text-base font-semibold text-slate-900">{folderGroup}</h3>
+                            <span className="text-xs text-slate-400 font-mono tabular-nums">
+                              · {groupVids.length} {groupVids.length === 1 ? 'project' : 'projects'}
+                            </span>
+                            {isSectionDropTarget && (
+                              <span className="px-2.5 py-0.5 rounded-md bg-emerald-600 text-white text-xs font-bold shadow-xs">
+                                Soltar aquí para mover a "{folderGroup}"
+                              </span>
+                            )}
+                          </div>
+                          <div className="flex items-center gap-2">
                             <button
                               type="button"
                               onClick={() =>
@@ -6582,36 +6865,86 @@ export default function App() {
                                   openCamera: true,
                                 })
                               }
-                              className="px-3.5 py-1.5 rounded-lg bg-rose-600 text-white font-semibold hover:bg-rose-500 inline-flex items-center gap-1.5"
+                              className="px-2.5 py-1 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-600 text-xs font-semibold flex items-center gap-1 whitespace-nowrap transition-colors"
                             >
                               <Camera className="w-3.5 h-3.5" />
-                              Grabar Cámara Aquí
+                              Grabar en Carpeta
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                handleStartCreateInTarget({
+                                  folder: folderGroup === 'Uncategorized' ? '' : folderGroup,
+                                })
+                              }
+                              className="px-3 py-1 rounded-lg bg-indigo-50 hover:bg-indigo-100 text-indigo-600 hover:text-indigo-700 text-xs font-semibold flex items-center gap-1 whitespace-nowrap transition-colors"
+                            >
+                              <Plus className="w-3.5 h-3.5" />
+                              Crear Video en "{folderGroup}"
                             </button>
                           </div>
                         </div>
-                      ) : (
-                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                          {groupVids.map(vid => (
-                            <VideoCard 
-                              key={vid.id} 
-                              video={vid} 
-                              existingFolders={existingFolderNames}
-                              isSelectedForMerge={selectedVideoIdsForMerge.includes(vid.id)}
-                              isLiked={likedSet.has(vid.id)}
-                              onToggleLike={handleToggleLikeVideo}
-                              onToggleSelectForMerge={handleToggleSelectForMerge}
-                              onUpdateFolder={handleUpdateVideoFolder}
-                              onOpenIn3D={handleOpenIn3D}
-                              onPlayVideo={setPlayingVideo}
-                              onEditVideoInStudio={handleEditVideoInStudio}
-                              onDuplicateVideo={handleDuplicateVideo}
-                              onDeleteVideo={handleDeleteVideo}
-                            />
-                          ))}
-                        </div>
-                      )}
-                    </section>
-                  ))}
+
+                        {groupVids.length === 0 ? (
+                          <div className="py-8 px-4 text-center bg-white border border-dashed border-slate-200 rounded-xl text-xs text-slate-400 space-y-3">
+                            <p>
+                              Esta carpeta está vacía. <strong>Arrastra y suelta cualquier video aquí</strong>, o crea un video nuevo directamente en esta carpeta.
+                            </p>
+                            <div className="flex items-center justify-center gap-2">
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  handleStartCreateInTarget({
+                                    folder: folderGroup === 'Uncategorized' ? '' : folderGroup,
+                                  })
+                                }
+                                className="px-3.5 py-1.5 rounded-lg bg-indigo-600 text-white font-semibold hover:bg-indigo-700 inline-flex items-center gap-1.5"
+                              >
+                                <Plus className="w-3.5 h-3.5" />
+                                Crear Video Aquí
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  handleStartCreateInTarget({
+                                    folder: folderGroup,
+                                    openCamera: true,
+                                  })
+                                }
+                                className="px-3.5 py-1.5 rounded-lg bg-rose-600 text-white font-semibold hover:bg-rose-500 inline-flex items-center gap-1.5"
+                              >
+                                <Camera className="w-3.5 h-3.5" />
+                                Grabar Cámara Aquí
+                              </button>
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                            {groupVids.map(vid => (
+                              <VideoCard 
+                                key={vid.id} 
+                                video={vid} 
+                                existingFolders={existingFolderNames}
+                                isSelectedForMerge={selectedVideoIdsForMerge.includes(vid.id)}
+                                isLiked={likedSet.has(vid.id)}
+                                isDragging={draggingVideoIds.includes(vid.id)}
+                                onDragStartVideo={handleDragStartVideo}
+                                onDragEndVideo={handleDragEndVideo}
+                                onToggleLike={handleToggleLikeVideo}
+                                onToggleSelectForMerge={handleToggleSelectForMerge}
+                                onUpdateFolder={handleUpdateVideoFolder}
+                                onOpenIn3D={handleOpenIn3D}
+                                onPlayVideo={setPlayingVideo}
+                                onEditVideoInStudio={handleEditVideoInStudio}
+                                onDuplicateVideo={handleDuplicateVideo}
+                                onDeleteVideo={handleDeleteVideo}
+                              />
+                            ))}
+                          </div>
+                        )}
+                      </section>
+                    );
+                  })}
                 </div>
               ) : (
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
@@ -6622,6 +6955,9 @@ export default function App() {
                       existingFolders={existingFolderNames}
                       isSelectedForMerge={selectedVideoIdsForMerge.includes(vid.id)}
                       isLiked={likedSet.has(vid.id)}
+                      isDragging={draggingVideoIds.includes(vid.id)}
+                      onDragStartVideo={handleDragStartVideo}
+                      onDragEndVideo={handleDragEndVideo}
                       onToggleLike={handleToggleLikeVideo}
                       onToggleSelectForMerge={handleToggleSelectForMerge}
                       onUpdateFolder={handleUpdateVideoFolder}
