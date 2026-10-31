@@ -29,6 +29,7 @@ function getAiClient() {
 }
 
 const PRESET_CYCLE = ['coupe', 'station', 'drone', 'sculpture', 'protein'] as const;
+type SubjectPreset = (typeof PRESET_CYCLE)[number];
 
 function buildFallbackPlan(prompt: string, duration = '15s', requestedSceneCount?: number) {
   const clean = prompt.trim() || 'Secuencia Cinematográfica Multi-Escenario';
@@ -583,6 +584,310 @@ Devuelve un JSON con:
       overlayText: rewrittenOverlayText || rewrittenDescription,
       scene3dPreset: suggestedPreset,
       ...(regeneratedImageDataUrl ? { imageDataUrl: regeneratedImageDataUrl } : {}),
+    });
+  });
+
+  // 3c. Transcribe Video/Audio & Regenerate as 3D Multi-Scene Sequence Endpoint (gemini-3.5-transcribe + gemini-3.8-flash)
+  app.post('/api/ai/transcribe-video-3d', async (req, res) => {
+    const {
+      videoName = 'Video Subido',
+      mediaBase64,
+      mediaMimeType = 'video/mp4',
+      frames = [],
+      prompt = '',
+      durationSec = 12,
+      sceneCount = 4,
+      targetPreset = 'coupe',
+      regenerateVisuals = false,
+    } = req.body || {};
+
+    const ai = getAiClient();
+    const targetCount = Math.min(8, Math.max(2, Number(sceneCount) || 4));
+    const perSceneSec = Math.max(2.5, Math.round((Number(durationSec || 12) / targetCount) * 10) / 10);
+    const frameList: string[] = Array.isArray(frames) ? frames.filter((f) => typeof f === 'string' && f.length > 0) : [];
+
+    let transcriptText = '';
+    let generatedTitle = `${String(videoName).replace(/\.[^.]+$/, '')} · Transcripción 3D IA`;
+    let generatedScenes: Array<{
+      description: string;
+      overlayText: string;
+      duration: string;
+      scene3dPreset: SubjectPreset;
+      imageUrl?: string;
+    }> = [];
+
+    // Step 1: Attempt direct audio/video transcription with gemini-3.5-transcribe when mediaBase64 is provided
+    if (ai && mediaBase64 && typeof mediaBase64 === 'string') {
+      try {
+        const cleanMedia = mediaBase64.includes(',') ? mediaBase64.split(',')[1] : mediaBase64;
+        if (cleanMedia.length > 0 && cleanMedia.length < 18_000_000) {
+          const transRes = await ai.models.generateContent({
+            model: 'gemini-3.5-transcribe',
+            contents: {
+              parts: [
+                {
+                  inlineData: {
+                    data: cleanMedia,
+                    mimeType: mediaMimeType || 'video/mp4',
+                  },
+                },
+                {
+                  text: 'Transcribe en español todo el audio, narración o contenido hablado de este video. Si no hay voz hablada, describe brevemente la acción sonora y visual principal.',
+                },
+              ],
+            },
+          });
+          if (transRes.text?.trim()) {
+            transcriptText = transRes.text.trim();
+          }
+        }
+      } catch (transErr: any) {
+        console.info('gemini-3.5-transcribe fallback to multimodal frame analysis:', transErr?.message);
+      }
+    }
+
+    // Step 2: Multimodal analysis of video frames + transcript to build 3D regenerated scenes via gemini-3.8-flash
+    if (ai) {
+      try {
+        const parts: any[] = [];
+        for (const frameDataUrl of frameList.slice(0, 4)) {
+          const raster = extractRasterBase64(frameDataUrl);
+          if (raster) {
+            parts.push({
+              inlineData: {
+                data: raster.data,
+                mimeType: raster.mimeType,
+              },
+            });
+          }
+        }
+
+        const analysisPrompt = `Eres el Director de Producción 3D de Reelify Video AI.
+Analiza el video "${videoName}" ${transcriptText ? `(Transcripción detectada: "${transcriptText}")` : ''} ${prompt ? `(Instrucción del usuario: "${prompt}")` : ''}.
+Tu tarea es:
+1. Generar una transcripción narrativa completa en español ("transcript") que resuma o transcriba el video para usarlo en escenarios 3D.
+2. Dividir y regenerar el video en exactamente ${targetCount} escenas 3D ("scenes") de ~${perSceneSec}s cada una.
+3. Asignar a cada escena un escenario 3D ("scene3dPreset") entre: "coupe", "station", "drone", "sculpture", "protein".
+Devuelve JSON con: "title", "transcript", y "scenes" (cada escena con "description", "overlayText", "duration", "scene3dPreset").`;
+
+        parts.push({ text: analysisPrompt });
+
+        const response = await ai.models.generateContent({
+          model: 'gemini-3.8-flash',
+          contents: { parts },
+          config: {
+            responseMimeType: 'application/json',
+            responseSchema: {
+              type: Type.OBJECT,
+              properties: {
+                title: { type: Type.STRING },
+                transcript: { type: Type.STRING },
+                scenes: {
+                  type: Type.ARRAY,
+                  items: {
+                    type: Type.OBJECT,
+                    properties: {
+                      description: { type: Type.STRING },
+                      overlayText: { type: Type.STRING },
+                      duration: { type: Type.STRING },
+                      scene3dPreset: { type: Type.STRING },
+                    },
+                    required: ['description', 'overlayText', 'duration', 'scene3dPreset'],
+                  },
+                },
+              },
+              required: ['title', 'transcript', 'scenes'],
+            },
+          },
+        });
+
+        const raw = response.text?.trim() || '';
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          if (parsed.title) generatedTitle = String(parsed.title).trim();
+          if (parsed.transcript) transcriptText = String(parsed.transcript).trim();
+          if (Array.isArray(parsed.scenes) && parsed.scenes.length > 0) {
+            generatedScenes = parsed.scenes.map((sc: any, idx: number) => {
+              const preset: SubjectPreset = PRESET_CYCLE.includes(sc.scene3dPreset)
+                ? sc.scene3dPreset
+                : PRESET_CYCLE[idx % PRESET_CYCLE.length];
+              return {
+                description: String(sc.description || `Escena 0${idx + 1} transcrita en 3D`),
+                overlayText: String(sc.overlayText || sc.description || `ESCENA 0${idx + 1} · 3D IA`),
+                duration: String(sc.duration || `${perSceneSec}s`),
+                scene3dPreset: preset,
+                imageUrl: frameList[idx % Math.max(1, frameList.length)],
+              };
+            });
+          }
+        }
+      } catch (err: any) {
+        console.warn('Multimodal video-to-3D transcription fallback triggered:', err?.message);
+      }
+    }
+
+    if (!transcriptText) {
+      const cleanName = String(videoName).replace(/\.[^.]+$/, '') || 'Secuencia de Video';
+      transcriptText = `[Transcripción IA 3D · ${cleanName}] Secuencia visual transcrita y sincronizada en ${targetCount} escenas 3D (${perSceneSec}s por toma). ${
+        prompt ? `Dirección aplicada: ${prompt}.` : 'Iluminación volumétrica neón y rotación orbital 360° en estudio.'
+      }`;
+    }
+
+    if (generatedScenes.length === 0) {
+      const cleanName = String(videoName).replace(/\.[^.]+$/, '') || 'Video 3D';
+      const startIdx = PRESET_CYCLE.indexOf(targetPreset as SubjectPreset);
+      generatedScenes = Array.from({ length: targetCount }, (_, idx) => {
+        const preset = PRESET_CYCLE[(Math.max(0, startIdx) + idx) % PRESET_CYCLE.length];
+        return {
+          description: `Escena 0${idx + 1} [Transcrita de "${cleanName}"]: ${
+            prompt || 'Toma cinematográfica regenerada en escenario 3D con cámara en órbita y luces neón'
+          } (${preset.toUpperCase()}).`,
+          overlayText: `ESCENA 0${idx + 1} · ${cleanName.toUpperCase().slice(0, 34)} · 3D ${preset.toUpperCase()}`,
+          duration: `${perSceneSec}s`,
+          scene3dPreset: preset,
+          imageUrl: frameList[idx % Math.max(1, frameList.length)],
+        };
+      });
+    }
+
+    if (regenerateVisuals) {
+      for (let i = 0; i < generatedScenes.length; i++) {
+        const sc = generatedScenes[i];
+        const refImg = sc.imageUrl || frameList[i % Math.max(1, frameList.length)];
+        sc.imageUrl = await generateSceneImageOrFallback(ai, sc.description, i, refImg);
+      }
+    }
+
+    return res.json({
+      success: true,
+      title: generatedTitle,
+      transcript: transcriptText,
+      scenes: generatedScenes,
+    });
+  });
+
+  // 3d. Stitch / Combine Multiple Photos & Rotate in 3D with AI Endpoint
+  app.post('/api/ai/stitch-rotate-photos-3d', async (req, res) => {
+    const {
+      photos = [],
+      rotationAngle = 360,
+      spinDirection = 'right',
+      prompt = '',
+      scene3dPreset = 'coupe',
+      regenerateWithAi = false,
+    } = req.body || {};
+
+    const photoList: string[] = Array.isArray(photos)
+      ? photos.filter((p) => typeof p === 'string' && p.length > 0).slice(0, 12)
+      : [];
+
+    if (photoList.length === 0) {
+      return res.status(400).json({ error: 'Se requiere al menos una foto para juntar y girar en 3D.' });
+    }
+
+    const ai = getAiClient();
+    const validPreset: SubjectPreset = PRESET_CYCLE.includes(scene3dPreset) ? scene3dPreset : 'coupe';
+    const dirLabel = spinDirection === 'left' ? 'Giro Orbital Izquierda ↺' : 'Giro Orbital Derecha ↻';
+
+    let orbitalTitle = `Galería 3D (${photoList.length} Fotos Juntas · Giro ${rotationAngle}° IA)`;
+    let orbitalSummary = `Fusión holográfica 3D de ${photoList.length} fotografías sincronizadas en carrusel orbital (${dirLabel} · ${rotationAngle}°).`;
+    let photoDescriptions: string[] = [];
+
+    if (ai) {
+      try {
+        const parts: any[] = [];
+        for (const pUrl of photoList.slice(0, 4)) {
+          const raster = extractRasterBase64(pUrl);
+          if (raster) {
+            parts.push({
+              inlineData: {
+                data: raster.data,
+                mimeType: raster.mimeType,
+              },
+            });
+          }
+        }
+
+        parts.push({
+          text: `Eres el Director de Fotografía 3D de Reelify Studio.
+El usuario ha juntado ${photoList.length} fotografías para girarlas en un carrusel orbital 3D (${dirLabel}, ángulo ${rotationAngle}°) en el escenario "${validPreset}".
+${prompt ? `Instrucción adicional del usuario: "${prompt}".` : ''}
+Devuelve un JSON en español con:
+1. "title": Título impactante para la secuencia de fotos juntas girando en 3D.
+2. "summary": Descripción de cómo se fusionan y giran las fotos en el estudio 3D.
+3. "captions": Lista de ${photoList.length} textos breves (uno para cada foto en órbita 3D).`,
+        });
+
+        const response = await ai.models.generateContent({
+          model: 'gemini-3.8-flash',
+          contents: { parts },
+          config: {
+            responseMimeType: 'application/json',
+            responseSchema: {
+              type: Type.OBJECT,
+              properties: {
+                title: { type: Type.STRING },
+                summary: { type: Type.STRING },
+                captions: {
+                  type: Type.ARRAY,
+                  items: { type: Type.STRING },
+                },
+              },
+              required: ['title', 'summary', 'captions'],
+            },
+          },
+        });
+
+        const raw = response.text?.trim() || '';
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          if (parsed.title) orbitalTitle = String(parsed.title).trim();
+          if (parsed.summary) orbitalSummary = String(parsed.summary).trim();
+          if (Array.isArray(parsed.captions)) {
+            photoDescriptions = parsed.captions.map((c: any) => String(c).trim());
+          }
+        }
+      } catch (err: any) {
+        console.warn('Gemini stitch-rotate-photos-3d fallback triggered:', err?.message);
+      }
+    }
+
+    const outputPhotos: string[] = [];
+    for (let i = 0; i < photoList.length; i++) {
+      if (regenerateWithAi) {
+        const cap =
+          photoDescriptions[i] ||
+          `${prompt || 'Fotografía en órbita 3D con iluminación neón'} · Ángulo ${Math.round(
+            ((i + 1) / photoList.length) * Number(rotationAngle || 360)
+          )}°`;
+        const genImg = await generateSceneImageOrFallback(ai, cap, i, photoList[i]);
+        outputPhotos.push(genImg);
+      } else {
+        outputPhotos.push(photoList[i]);
+      }
+    }
+
+    const scenes = outputPhotos.map((imgUrl, idx) => {
+      const preset = PRESET_CYCLE[(PRESET_CYCLE.indexOf(validPreset) + idx) % PRESET_CYCLE.length];
+      const deg = Math.round(((idx + 1) / outputPhotos.length) * Number(rotationAngle || 360));
+      const caption =
+        photoDescriptions[idx] ||
+        `Foto #${idx + 1} unida y girando a ${deg}° (${dirLabel}) en el escenario 3D ${preset.toUpperCase()}.`;
+      return {
+        description: caption,
+        overlayText: `FOTO 3D 0${idx + 1} · GIRO ${deg}° · ${caption.slice(0, 68)}`,
+        duration: '4s',
+        scene3dPreset: preset,
+        imageUrl: imgUrl,
+      };
+    });
+
+    return res.json({
+      success: true,
+      title: orbitalTitle,
+      summary: orbitalSummary,
+      photos: outputPhotos,
+      scenes,
     });
   });
 

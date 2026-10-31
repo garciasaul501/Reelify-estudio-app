@@ -65,7 +65,9 @@ import {
   Type as TypeIcon,
   VolumeX,
   Car,
-  GripVertical
+  GripVertical,
+  RotateCw,
+  RotateCcw
 } from 'lucide-react';
 import { motion } from 'motion/react';
 import Studio3DScene, { SubjectPresetId, SceneItem } from './components/Studio3DScene';
@@ -299,6 +301,92 @@ export async function compressImageFile(file: File, maxDim = 640, quality = 0.78
     };
     reader.readAsDataURL(file);
   });
+}
+
+// Rotate a base64/dataURL photo by a given angle (90, 180, 270, or custom degrees)
+export async function rotateImageDataUrl(dataUrl: string, degrees = 90): Promise<string> {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.onload = () => {
+      const rad = ((degrees % 360) * Math.PI) / 180;
+      const w = img.naturalWidth || 640;
+      const h = img.naturalHeight || 360;
+      const swapDims = Math.abs(degrees % 180) === 90;
+      const canvas = document.createElement('canvas');
+      canvas.width = swapDims ? h : w;
+      canvas.height = swapDims ? w : h;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) {
+        resolve(dataUrl);
+        return;
+      }
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.translate(canvas.width / 2, canvas.height / 2);
+      ctx.rotate(rad);
+      ctx.drawImage(img, -w / 2, -h / 2, w, h);
+      resolve(canvas.toDataURL('image/jpeg', 0.84));
+    };
+    img.onerror = () => resolve(dataUrl);
+    img.src = dataUrl;
+  });
+}
+
+// Stitch / Combine multiple photos together into a framed 3D-ready composite image with optional rotation
+export async function stitchPhotosDataUrl(photos: string[], rotationDeg = 0): Promise<string> {
+  if (photos.length === 0) return '';
+  if (photos.length === 1 && rotationDeg === 0) return photos[0];
+  const canvas = document.createElement('canvas');
+  canvas.width = 960;
+  canvas.height = 540;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return photos[0];
+
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  const count = Math.min(8, photos.length);
+  const cols = count <= 2 ? count : count <= 4 ? 2 : 4;
+  const rows = Math.ceil(count / cols);
+  const cellW = canvas.width / cols;
+  const cellH = canvas.height / rows;
+
+  const loaded = await Promise.all(
+    photos.slice(0, count).map(
+      (src) =>
+        new Promise<HTMLImageElement | null>((res) => {
+          const im = new Image();
+          im.crossOrigin = 'anonymous';
+          im.onload = () => res(im);
+          im.onerror = () => res(null);
+          im.src = src;
+        })
+    )
+  );
+
+  loaded.forEach((im, idx) => {
+    if (!im) return;
+    const c = idx % cols;
+    const r = Math.floor(idx / cols);
+    const cx = c * cellW + cellW / 2;
+    const cy = r * cellH + cellH / 2;
+
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(c * cellW + 4, r * cellH + 4, cellW - 8, cellH - 8);
+    ctx.clip();
+    ctx.translate(cx, cy);
+    ctx.rotate((rotationDeg * Math.PI) / 180);
+    ctx.drawImage(im, -cellW / 2, -cellH / 2, cellW, cellH);
+    ctx.restore();
+
+    ctx.strokeStyle = idx % 2 === 0 ? '#ff007f' : '#00e5ff';
+    ctx.lineWidth = 4;
+    ctx.strokeRect(c * cellW + 4, r * cellH + 4, cellW - 8, cellH - 8);
+  });
+
+  return canvas.toDataURL('image/jpeg', 0.84);
 }
 
 // Extract keyframe images from an uploaded video file so uploaded videos can also be edited into multi-scene sequences & 3D stages
@@ -4053,6 +4141,13 @@ export default function App() {
   const [dragOverFolder, setDragOverFolder] = useState<string | null>(null);
   const [newDropFolderInput, setNewDropFolderInput] = useState('');
 
+  // Video Transcription + 3D Regeneration & Photo Stitch + 3D Spin State
+  const [isTranscribingVideoTo3D, setIsTranscribingVideoTo3D] = useState(false);
+  const [isStitchingAndRotatingPhotos, setIsStitchingAndRotatingPhotos] = useState(false);
+  const [photoSpinAngleDeg, setPhotoSpinAngleDeg] = useState<number>(0);
+  const transcribeVideoInputRef = useRef<HTMLInputElement | null>(null);
+  const stitchPhotosInputRef = useRef<HTMLInputElement | null>(null);
+
   // Free Business Registration State (Directed to https://whop.com/@saulmente)
   const [localRegistrations, setLocalRegistrations] = useState<FreeBusinessRegistration[]>(() =>
     loadLocalRegistrations()
@@ -5338,6 +5433,306 @@ export default function App() {
     }
   };
 
+  // Transcribe an uploaded or active video with AI and add/regenerate it as 3D Multi-Scenes
+  const handleTranscribeAndGenerate3DFromVideo = async (
+    fileOverride?: File,
+    options?: { appendToExisting?: boolean; openIn3D?: boolean; regenerateVisuals?: boolean }
+  ) => {
+    if (isTranscribingVideoTo3D) return;
+    setIsTranscribingVideoTo3D(true);
+    setError(null);
+
+    try {
+      let vidUrl = uploadedVideoObjectUrl || activeStudioProject?.videoData || '';
+      let vidName = uploadedVideoName || projectTitle || activeStudioProject?.title || 'Video Transcrito 3D';
+      let frames: string[] = uploadedImages.length > 0 ? uploadedImages.slice(0, 4) : [];
+      let durationSec = 12;
+      let mediaBase64: string | undefined;
+      let mediaMimeType = 'video/mp4';
+
+      if (fileOverride) {
+        vidName = fileOverride.name;
+        mediaMimeType = fileOverride.type || 'video/mp4';
+        const extracted = await extractFramesFromVideoFile(fileOverride, 4);
+        vidUrl = extracted.videoObjectUrl;
+        frames = extracted.frames;
+        durationSec = extracted.durationSec;
+        setUploadedVideoObjectUrl(vidUrl);
+        setUploadedVideoName(vidName);
+        setUploadedImages((prev) => Array.from(new Set([...frames, ...prev])).slice(0, 12));
+
+        if (fileOverride.size < 8 * 1024 * 1024) {
+          mediaBase64 = await new Promise<string>((res) => {
+            const reader = new FileReader();
+            reader.onload = () => res(String(reader.result || ''));
+            reader.onerror = () => res('');
+            reader.readAsDataURL(fileOverride);
+          });
+        }
+      } else if (frames.length === 0) {
+        frames = draftScenes.map((s) => s.imageUrl).filter((u): u is string => Boolean(u));
+      }
+
+      const res = await fetch('/api/ai/transcribe-video-3d', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          videoName: vidName,
+          mediaBase64,
+          mediaMimeType,
+          frames,
+          prompt: quickPrompt.trim() || prompt.trim() || '',
+          durationSec,
+          sceneCount: targetSceneCount || 4,
+          targetPreset: selected3DPresetForCreate,
+          regenerateVisuals: Boolean(options?.regenerateVisuals),
+        }),
+      });
+
+      const data = await res.json();
+      const presets: SubjectPresetId[] = ['coupe', 'station', 'drone', 'sculpture', 'protein'];
+      const builtScenes: Scene[] = Array.isArray(data.scenes)
+        ? data.scenes.map((sc: any, idx: number) => {
+            const preset: SubjectPresetId = presets.includes(sc.scene3dPreset)
+              ? sc.scene3dPreset
+              : presets[idx % presets.length];
+            const imgUrl =
+              sc.imageUrl ||
+              frames[idx % Math.max(1, frames.length)] ||
+              createSampleSceneDataUrl(preset, `Escena 0${idx + 1} · 3D IA`);
+            return {
+              description: sc.description,
+              overlayText: sc.overlayText || sc.description,
+              duration: sc.duration || '4s',
+              scene3dPreset: preset,
+              imageUrl: imgUrl,
+              images: [imgUrl],
+            };
+          })
+        : [];
+
+      if (builtScenes.length > 0) {
+        const finalScenes = options?.appendToExisting ? [...draftScenes, ...builtScenes] : builtScenes;
+        setDraftScenes(finalScenes);
+        const allPhotos = finalScenes.map((s) => s.imageUrl).filter((u): u is string => Boolean(u));
+        if (allPhotos.length > 0) {
+          setUploadedImages((prev) => Array.from(new Set([...allPhotos, ...prev])).slice(0, 12));
+        }
+        if (data.title && !projectTitle.trim()) {
+          setProjectTitle(data.title);
+        }
+        if (data.transcript) {
+          setActiveTextOverlay(String(data.transcript));
+          setPrompt(String(data.transcript));
+        }
+
+        const totalSec = getTotalScenesDurationSeconds(finalScenes, `${durationSec}s`);
+        const newProj: VideoProject = {
+          id: `transcribed-3d-${Date.now()}`,
+          userId: user ? user.uid : 'local-studio',
+          title: (data.title || `${vidName.replace(/\.[^.]+$/, '')} · 3D Transcrito IA`).slice(0, 200),
+          prompt: String(data.transcript || prompt || vidName).slice(0, 2000),
+          folder: (folderName || 'Videos Transcritos 3D').slice(0, 100),
+          scene3dPreset: finalScenes[0]?.scene3dPreset || selected3DPresetForCreate,
+          images: allPhotos.slice(0, 12),
+          referenceImage: allPhotos[0],
+          script: String(data.transcript || ''),
+          scenes: finalScenes,
+          status: 'completed',
+          aspectRatio,
+          duration: `${totalSec}s`,
+          ...(vidUrl ? { videoData: vidUrl, mimeType: mediaMimeType } : {}),
+          createdAt: { seconds: Math.floor(Date.now() / 1000) },
+        };
+
+        await persistVideoProject(newProj);
+        setActiveStudioProject(newProj);
+        setSaveBannerMessage(
+          `¡Video "${vidName}" transcrito y regenerado en ${finalScenes.length} escenas 3D con IA!`
+        );
+        setTimeout(() => setSaveBannerMessage(null), 4500);
+
+        if (options?.openIn3D) {
+          setActive3DSubject(finalScenes[0]?.scene3dPreset || selected3DPresetForCreate);
+          setActiveTab('studio3d');
+        }
+      }
+    } catch (err: any) {
+      setError(err.message || 'No se pudo transcribir y regenerar el video en 3D.');
+    } finally {
+      setIsTranscribingVideoTo3D(false);
+    }
+  };
+
+  // Upload multiple photos, stitch ("Juntar Fotos"), rotate them, and spin them in 3D with AI
+  const handleStitchAndSpinPhotosWithAI = async (
+    filesOverride?: File[],
+    options?: { rotateDeltaDeg?: number; regenerateWithAi?: boolean; openIn3D?: boolean }
+  ) => {
+    if (isStitchingAndRotatingPhotos) return;
+    setIsStitchingAndRotatingPhotos(true);
+    setError(null);
+
+    try {
+      const nextAngle =
+        typeof options?.rotateDeltaDeg === 'number'
+          ? (photoSpinAngleDeg + options.rotateDeltaDeg) % 360
+          : photoSpinAngleDeg;
+      setPhotoSpinAngleDeg(nextAngle);
+
+      let sourcePhotos: string[] = [];
+      if (filesOverride && filesOverride.length > 0) {
+        for (const f of filesOverride.slice(0, 10)) {
+          const compressed = await compressImageFile(f, 640, 0.8);
+          sourcePhotos.push(compressed);
+        }
+      }
+
+      const existingScenePhotos = draftScenes.flatMap((s) =>
+        s.images && s.images.length > 0 ? s.images : s.imageUrl ? [s.imageUrl] : []
+      );
+      const allPhotos = Array.from(new Set([...sourcePhotos, ...uploadedImages, ...existingScenePhotos])).slice(0, 12);
+
+      if (allPhotos.length === 0) {
+        allPhotos.push(
+          createSampleSceneDataUrl('coupe', 'Foto 01 · 3D IA'),
+          createSampleSceneDataUrl('sculpture', 'Foto 02 · 3D IA'),
+          createSampleSceneDataUrl('station', 'Foto 03 · 3D IA')
+        );
+      }
+
+      // Apply rotation if angle > 0
+      const rotatedPhotos =
+        nextAngle > 0
+          ? await Promise.all(allPhotos.map((p) => rotateImageDataUrl(p, nextAngle)))
+          : allPhotos;
+
+      // Create stitched panoramic collage photo
+      const stitchedMasterPhoto = await stitchPhotosDataUrl(rotatedPhotos, 0);
+      const finalPhotoPool = stitchedMasterPhoto
+        ? [stitchedMasterPhoto, ...rotatedPhotos].slice(0, 12)
+        : rotatedPhotos;
+
+      setUploadedImages(finalPhotoPool);
+
+      const res = await fetch('/api/ai/stitch-rotate-photos-3d', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          photos: rotatedPhotos,
+          rotationAngle: nextAngle || 360,
+          spinDirection: 'right',
+          prompt: quickPrompt.trim() || prompt.trim() || 'Juntar fotos y girarlas en carrusel 3D con luces neón',
+          scene3dPreset: selected3DPresetForCreate,
+          regenerateWithAi: Boolean(options?.regenerateWithAi),
+        }),
+      });
+      const data = await res.json();
+
+      const aiPhotos: string[] = Array.isArray(data.photos) && data.photos.length > 0 ? data.photos : rotatedPhotos;
+      const presets: SubjectPresetId[] = ['coupe', 'sculpture', 'drone', 'station', 'protein'];
+      const builtScenes: Scene[] = Array.isArray(data.scenes) && data.scenes.length > 0
+        ? data.scenes.map((sc: any, idx: number) => ({
+            description: sc.description,
+            overlayText: sc.overlayText || sc.description,
+            duration: sc.duration || '4s',
+            scene3dPreset: presets.includes(sc.scene3dPreset) ? sc.scene3dPreset : presets[idx % presets.length],
+            imageUrl: idx === 0 && stitchedMasterPhoto ? stitchedMasterPhoto : aiPhotos[idx % aiPhotos.length],
+            images: finalPhotoPool,
+          }))
+        : aiPhotos.map((img, idx) => ({
+            description: `Foto #${idx + 1} unida y girada (${nextAngle || 360}°) en carrusel 3D con IA.`,
+            overlayText: `FOTO 3D 0${idx + 1} · JUNTAS Y GIRANDO (${nextAngle || 360}°)`,
+            duration: '4s',
+            scene3dPreset: presets[idx % presets.length],
+            imageUrl: img,
+            images: finalPhotoPool,
+          }));
+
+      setDraftScenes(builtScenes);
+      const totalSec = getTotalScenesDurationSeconds(builtScenes, '12s');
+      const newProj: VideoProject = {
+        id: `stitched-3d-${Date.now()}`,
+        userId: user ? user.uid : 'local-studio',
+        title: (data.title || `Fotos Juntas Girando en 3D (${rotatedPhotos.length} Fotos · ${nextAngle || 360}°)`).slice(0, 200),
+        prompt: String(data.summary || prompt || 'Fotos unidas y giradas en 3D con IA').slice(0, 2000),
+        folder: (folderName || 'Fotos 3D Giratorias IA').slice(0, 100),
+        scene3dPreset: builtScenes[0]?.scene3dPreset || selected3DPresetForCreate,
+        images: finalPhotoPool,
+        referenceImage: stitchedMasterPhoto || finalPhotoPool[0],
+        script: String(data.summary || ''),
+        scenes: builtScenes,
+        status: 'completed',
+        aspectRatio,
+        duration: `${totalSec}s`,
+        createdAt: { seconds: Math.floor(Date.now() / 1000) },
+      };
+
+      await persistVideoProject(newProj);
+      setActiveStudioProject(newProj);
+      setSaveBannerMessage(
+        `¡${rotatedPhotos.length} fotos juntas y giradas (${nextAngle || 360}°) en 3D con ayuda de la IA!`
+      );
+      setTimeout(() => setSaveBannerMessage(null), 4500);
+
+      if (options?.openIn3D) {
+        setActive3DSubject(builtScenes[0]?.scene3dPreset || selected3DPresetForCreate);
+        setActiveTab('studio3d');
+      }
+    } catch (err: any) {
+      setError(err.message || 'No se pudieron juntar y girar las fotos con IA.');
+    } finally {
+      setIsStitchingAndRotatingPhotos(false);
+    }
+  };
+
+  // Rotate the active photo of a single Scene Row by +90 degrees
+  const handleRotateSingleScenePhoto = async (sceneIdx: number) => {
+    const sc = draftScenes[sceneIdx];
+    if (!sc?.imageUrl) return;
+    const rotated = await rotateImageDataUrl(sc.imageUrl, 90);
+    setDraftScenes((prev) =>
+      prev.map((item, i) => {
+        if (i !== sceneIdx) return item;
+        const existing = item.images && item.images.length > 0 ? item.images : [item.imageUrl!];
+        return {
+          ...item,
+          imageUrl: rotated,
+          images: [rotated, ...existing.filter((u) => u !== item.imageUrl)].slice(0, 8),
+        };
+      })
+    );
+    setSaveBannerMessage(`Foto de la Escena 0${sceneIdx + 1} girada 90° lista para 3D.`);
+    setTimeout(() => setSaveBannerMessage(null), 3000);
+  };
+
+  // Stitch/Combine all photos attached to a single Scene Row into a composite frame
+  const handleStitchSingleScenePhotos = async (sceneIdx: number) => {
+    const sc = draftScenes[sceneIdx];
+    const photos = sc?.images && sc.images.length > 1 ? sc.images : uploadedImages;
+    if (!photos || photos.length < 2) {
+      setSaveBannerMessage('Agrega 2 o más fotos a la escena para juntarlas en un collage 3D.');
+      setTimeout(() => setSaveBannerMessage(null), 3500);
+      return;
+    }
+    const stitched = await stitchPhotosDataUrl(photos, 0);
+    if (!stitched) return;
+    setDraftScenes((prev) =>
+      prev.map((item, i) =>
+        i === sceneIdx
+          ? {
+              ...item,
+              imageUrl: stitched,
+              images: Array.from(new Set([stitched, ...photos])).slice(0, 8),
+              description: `${item.description} [Fotos Juntas en Collage 3D]`,
+            }
+          : item
+      )
+    );
+    setSaveBannerMessage(`¡${photos.length} fotos juntas en la Escena 0${sceneIdx + 1}!`);
+    setTimeout(() => setSaveBannerMessage(null), 3500);
+  };
+
   // Upload one or multiple photos for a specific scene row in the Multi-Scene Editor
   const handleSceneRowImageUpload = async (sceneIdx: number, e: React.ChangeEvent<HTMLInputElement>) => {
     const files: File[] = e.target.files ? Array.from(e.target.files) : [];
@@ -6293,6 +6688,118 @@ export default function App() {
                   </button>
                 </div>
 
+                {/* HIDDEN INPUTS FOR TRANSCRIBING VIDEOS TO 3D & STITCHING/ROTATING PHOTOS WITH AI */}
+                <input
+                  ref={transcribeVideoInputRef}
+                  type="file"
+                  accept="video/*,audio/*,.mp4,.webm,.mov,.mp3,.wav"
+                  onChange={(e) => {
+                    const f = e.target.files?.[0];
+                    if (f) handleTranscribeAndGenerate3DFromVideo(f, { openIn3D: false, regenerateVisuals: false });
+                    e.target.value = '';
+                  }}
+                  className="hidden"
+                />
+                <input
+                  ref={stitchPhotosInputRef}
+                  type="file"
+                  accept="image/*"
+                  multiple
+                  onChange={(e) => {
+                    const files: File[] = e.target.files ? Array.from(e.target.files) : [];
+                    if (files.length > 0) handleStitchAndSpinPhotosWithAI(files, { openIn3D: false });
+                    e.target.value = '';
+                  }}
+                  className="hidden"
+                />
+
+                {/* NEW AI 3D BAR: TRANSCRIBIR VIDEOS + REGENERAR EN 3D + JUNTAR FOTOS Y GIRARLAS CON LA IA */}
+                <div className="p-3.5 rounded-xl bg-gradient-to-r from-fuchsia-50 via-white to-cyan-50 border-2 border-cyan-400 flex flex-wrap items-center justify-between gap-2.5">
+                  <div className="flex items-center gap-2">
+                    <Sparkles className="w-4 h-4 text-fuchsia-600 shrink-0" />
+                    <span className="text-xs font-extrabold text-violet-900">
+                      IA 3D: Transcribir Videos a 3D · Regenerar · Juntar Fotos y Girarlas (360°)
+                    </span>
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      disabled={isTranscribingVideoTo3D}
+                      onClick={() => transcribeVideoInputRef.current?.click()}
+                      className="px-3 py-2 rounded-xl bg-violet-600 hover:bg-violet-500 text-white text-xs font-extrabold flex items-center gap-1.5 shadow-xs disabled:opacity-50"
+                      title="Subir y transcribir un video para agregarlo generando escenas 3D automáticamente"
+                    >
+                      {isTranscribingVideoTo3D ? (
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      ) : (
+                        <FileText className="w-3.5 h-3.5" />
+                      )}
+                      <span>{isTranscribingVideoTo3D ? 'Transcribiendo Video...' : 'Transcribir Video → Generar 3D'}</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      disabled={isTranscribingVideoTo3D}
+                      onClick={() =>
+                        handleTranscribeAndGenerate3DFromVideo(undefined, {
+                          regenerateVisuals: true,
+                          openIn3D: false,
+                        })
+                      }
+                      className="px-3 py-2 rounded-xl bg-fuchsia-600 hover:bg-fuchsia-500 text-white text-xs font-extrabold flex items-center gap-1.5 shadow-xs disabled:opacity-50"
+                      title="Regenerar y transcribir el video o proyecto actual generando de 3D con la IA"
+                    >
+                      <RefreshCw className={`w-3.5 h-3.5 ${isTranscribingVideoTo3D ? 'animate-spin' : ''}`} />
+                      <span>Regenerar Video en 3D IA</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      disabled={isStitchingAndRotatingPhotos}
+                      onClick={() => stitchPhotosInputRef.current?.click()}
+                      className="px-3 py-2 rounded-xl bg-white hover:bg-cyan-50 border-2 border-cyan-400 text-violet-800 text-xs font-extrabold flex items-center gap-1.5 disabled:opacity-50"
+                      title="Seleccionar varias fotos para juntarlas y girarlas con la IA"
+                    >
+                      <ImageIcon className="w-3.5 h-3.5 text-fuchsia-600" />
+                      <span>+ Juntar Fotos ({uploadedImages.length})</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      disabled={isStitchingAndRotatingPhotos}
+                      onClick={() =>
+                        handleStitchAndSpinPhotosWithAI(undefined, {
+                          rotateDeltaDeg: 90,
+                          regenerateWithAi: false,
+                          openIn3D: false,
+                        })
+                      }
+                      className="px-3 py-2 rounded-xl bg-white hover:bg-fuchsia-50 border-2 border-fuchsia-400 text-fuchsia-600 text-xs font-extrabold flex items-center gap-1.5 disabled:opacity-50"
+                      title="Juntar las fotos cargadas y girarlas 90° / 360° con la IA"
+                    >
+                      <RotateCw className={`w-3.5 h-3.5 ${isStitchingAndRotatingPhotos ? 'animate-spin' : ''}`} />
+                      <span>Girar Fotos IA ({photoSpinAngleDeg}°)</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      disabled={isStitchingAndRotatingPhotos}
+                      onClick={() =>
+                        handleStitchAndSpinPhotosWithAI(undefined, {
+                          regenerateWithAi: false,
+                          openIn3D: true,
+                        })
+                      }
+                      className="px-3 py-2 rounded-xl bg-gradient-to-r from-fuchsia-600 via-violet-600 to-cyan-500 hover:from-fuchsia-500 hover:to-cyan-400 text-white text-xs font-extrabold flex items-center gap-1.5 shadow-sm disabled:opacity-50"
+                      title="Juntar todas las fotos y abrirlas girando en el Anillo Orbital 3D con IA"
+                    >
+                      <Box className="w-3.5 h-3.5" />
+                      <span>Juntar y Girar en Escenario 3D</span>
+                    </button>
+                  </div>
+                </div>
+
                 {/* Live Created Text Strip (Escenarios Sin Voz · Texto en Pantalla) */}
                 {activeTextOverlay && (
                   <div className="p-4 rounded-xl bg-slate-900 text-white border border-slate-700 space-y-2.5">
@@ -7231,6 +7738,70 @@ export default function App() {
                       />
                     </label>
 
+                    <button
+                      type="button"
+                      disabled={isTranscribingVideoTo3D}
+                      onClick={() => transcribeVideoInputRef.current?.click()}
+                      className="px-4 py-2.5 rounded-xl bg-violet-600 hover:bg-violet-500 text-white text-xs font-extrabold flex items-center gap-2 transition-colors shadow-xs disabled:opacity-50"
+                      title="Transcribir un video con IA y agregar sus escenas generadas en 3D"
+                    >
+                      {isTranscribingVideoTo3D ? (
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                      ) : (
+                        <FileText className="w-4 h-4" />
+                      )}
+                      <span>{isTranscribingVideoTo3D ? 'Transcribiendo Video 3D...' : 'Transcribir Video y Agregar en 3D'}</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      disabled={isTranscribingVideoTo3D}
+                      onClick={() =>
+                        handleTranscribeAndGenerate3DFromVideo(undefined, {
+                          appendToExisting: true,
+                          regenerateVisuals: true,
+                        })
+                      }
+                      className="px-4 py-2.5 rounded-xl bg-fuchsia-600 hover:bg-fuchsia-500 text-white text-xs font-extrabold flex items-center gap-2 transition-colors shadow-xs disabled:opacity-50"
+                      title="Regenerar y agregar nuevas escenas 3D transcritas con ayuda de la IA"
+                    >
+                      <RefreshCw className={`w-4 h-4 ${isTranscribingVideoTo3D ? 'animate-spin' : ''}`} />
+                      <span>Regenerar y Agregar 3D con IA</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      disabled={isStitchingAndRotatingPhotos}
+                      onClick={() =>
+                        handleStitchAndSpinPhotosWithAI(undefined, {
+                          rotateDeltaDeg: 90,
+                          regenerateWithAi: false,
+                          openIn3D: false,
+                        })
+                      }
+                      className="px-4 py-2.5 rounded-xl bg-cyan-600 hover:bg-cyan-500 text-white text-xs font-extrabold flex items-center gap-2 transition-colors shadow-xs disabled:opacity-50"
+                      title="Juntar todas las fotos subidas y girarlas con la IA"
+                    >
+                      <RotateCw className={`w-4 h-4 ${isStitchingAndRotatingPhotos ? 'animate-spin' : ''}`} />
+                      <span>Juntar Fotos y Girarlas IA ({photoSpinAngleDeg}°)</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      disabled={isStitchingAndRotatingPhotos}
+                      onClick={() =>
+                        handleStitchAndSpinPhotosWithAI(undefined, {
+                          regenerateWithAi: false,
+                          openIn3D: true,
+                        })
+                      }
+                      className="px-4 py-2.5 rounded-xl bg-gradient-to-r from-fuchsia-600 via-violet-600 to-cyan-500 hover:from-fuchsia-500 hover:to-cyan-400 text-white text-xs font-extrabold flex items-center gap-2 transition-all shadow-sm disabled:opacity-50"
+                      title="Unir las fotos y abrirlas girando en el Anillo Orbital 3D"
+                    >
+                      <Box className="w-4 h-4" />
+                      <span>Girar Fotos Juntas en 3D</span>
+                    </button>
+
                     {uploadedVideoName && (
                       <span className="px-3 py-1.5 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-medium flex items-center gap-2">
                         <Check className="w-3.5 h-3.5 text-emerald-600" />
@@ -7491,6 +8062,24 @@ export default function App() {
                                   <Sparkles className="w-3 h-3" />
                                 )}
                                 <span>IA Foto</span>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleRotateSingleScenePhoto(idx)}
+                                className="py-1.5 px-2 rounded-lg bg-white border border-fuchsia-300 hover:bg-fuchsia-50 text-[11px] font-bold text-fuchsia-600 flex items-center justify-center gap-1"
+                                title="Girar foto de esta escena 90°"
+                              >
+                                <RotateCw className="w-3 h-3 shrink-0" />
+                                <span>Girar 90°</span>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleStitchSingleScenePhotos(idx)}
+                                className="py-1.5 px-2 rounded-lg bg-white border border-cyan-400 hover:bg-cyan-50 text-[11px] font-bold text-cyan-700 flex items-center justify-center gap-1"
+                                title="Juntar las fotos de esta escena en un collage 3D"
+                              >
+                                <Layers className="w-3 h-3 shrink-0" />
+                                <span>Juntar</span>
                               </button>
                             </div>
                           </div>

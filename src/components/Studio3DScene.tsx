@@ -8,7 +8,9 @@ import {
   Check,
   ChevronDown,
   ChevronUp,
+  FileText,
   Folder,
+  Image as ImageIcon,
   Layers,
   LayoutDashboard,
   Loader2,
@@ -16,6 +18,9 @@ import {
   Pause,
   Play,
   Plus,
+  RefreshCw,
+  RotateCcw,
+  RotateCw,
   Save,
   Sparkles,
   Sun,
@@ -29,11 +34,13 @@ import {
 
 export type SubjectPresetId = 'coupe' | 'sculpture' | 'drone' | 'station' | 'protein';
 export type ParticlePatternId = 'vortex' | 'fountain' | 'galaxy';
+export type PhotoSpinModeId = 'orbit' | 'self_spin' | 'helix_tilt';
 
 export interface SceneItem {
   description: string;
   duration: string;
   imageUrl?: string;
+  images?: string[];
   scene3dPreset?: SubjectPresetId;
   overlayText?: string;
 }
@@ -44,6 +51,7 @@ export interface StudioProjectContext {
   prompt?: string;
   folder?: string;
   scenes?: SceneItem[];
+  images?: string[];
   videoData?: string;
   referenceImage?: string;
 }
@@ -276,10 +284,27 @@ export default function Studio3DScene({
     treble: 32,
   });
 
+  // 3D Orbital Photo Ring (Juntar Fotos y Girarlas en 3D con IA) & Video Transcription State
+  const [stitchedPhotos, setStitchedPhotos] = useState<string[]>(() => {
+    const fromImgs = activeProject?.images || [];
+    const fromScenes = (activeProject?.scenes || []).map((s) => s.imageUrl).filter((u): u is string => Boolean(u));
+    return Array.from(new Set([...fromImgs, ...fromScenes])).slice(0, 12);
+  });
+  const [photoRingEnabled, setPhotoRingEnabled] = useState<boolean>(true);
+  const [photoSpinSpeed, setPhotoSpinSpeed] = useState<number>(1.15);
+  const [photoSpinDirection, setPhotoSpinDirection] = useState<1 | -1>(1);
+  const [photoSpinMode, setPhotoSpinMode] = useState<PhotoSpinModeId>('orbit');
+  const [photoRotationDeg, setPhotoRotationDeg] = useState<number>(0);
+  const [isStitchingAiPhotos, setIsStitchingAiPhotos] = useState<boolean>(false);
+  const [isTranscribingVideo3D, setIsTranscribingVideo3D] = useState<boolean>(false);
+  const [lastTranscriptSummary, setLastTranscriptSummary] = useState<string>('');
+
   const videoElRef = useRef<HTMLVideoElement | null>(null);
   const threeVideoTexRef = useRef<THREE.VideoTexture | null>(null);
   const liveWebcamStreamRef = useRef<MediaStream | null>(null);
   const sceneImgElRef = useRef<HTMLImageElement | null>(null);
+  const loadedPhotoElsRef = useRef<HTMLImageElement[]>([]);
+  const photoTexturesDirtyRef = useRef<boolean>(true);
 
   const musicAudioElRef = useRef<HTMLAudioElement | null>(null);
   const audioCtxRef = useRef<AudioContext | null>(null);
@@ -303,6 +328,14 @@ export default function Studio3DScene({
         setScenarioTextInput(firstSc.overlayText || firstSc.description);
       }
     }
+    if (activeProject?.images || activeProject?.scenes) {
+      const fromImgs = activeProject?.images || [];
+      const fromScenes = (activeProject?.scenes || []).map((s) => s.imageUrl).filter((u): u is string => Boolean(u));
+      const combined = Array.from(new Set([...fromImgs, ...fromScenes])).slice(0, 12);
+      if (combined.length > 0) {
+        setStitchedPhotos(combined);
+      }
+    }
     if (activeProject?.videoData) {
       setUploaded3DVideoUrl(activeProject.videoData);
       if (!uploaded3DVideoName) {
@@ -310,6 +343,29 @@ export default function Studio3DScene({
       }
     }
   }, [activeProject]);
+
+  // Preload HTMLImageElement instances whenever stitchedPhotos or localScenes change for the 3D Orbital Photo Ring
+  useEffect(() => {
+    const sceneUrls = localScenes.map((s) => s.imageUrl).filter((u): u is string => Boolean(u));
+    const mergedUrls = Array.from(new Set([...stitchedPhotos, ...sceneUrls])).slice(0, 12);
+    if (mergedUrls.length === 0) {
+      loadedPhotoElsRef.current = [];
+      photoTexturesDirtyRef.current = true;
+      return;
+    }
+    const imgElements: HTMLImageElement[] = [];
+    mergedUrls.forEach((url) => {
+      const img = new Image();
+      img.crossOrigin = 'anonymous';
+      img.onload = () => {
+        photoTexturesDirtyRef.current = true;
+      };
+      img.src = url;
+      imgElements.push(img);
+    });
+    loadedPhotoElsRef.current = imgElements;
+    photoTexturesDirtyRef.current = true;
+  }, [stitchedPhotos, localScenes]);
 
   // Sync when generatedMusicTrack prop changes from parent App
   useEffect(() => {
@@ -341,6 +397,12 @@ export default function Studio3DScene({
     midEnergy: 0,
     trebleEnergy: 0,
     beatPulse: 0,
+    photoRingEnabled: true,
+    photoSpinSpeed: 1.15,
+    photoSpinDirection: 1 as 1 | -1,
+    photoSpinMode: 'orbit' as PhotoSpinModeId,
+    photoRotationDeg: 0,
+    photoCount: 0,
     projectTitle: activeProject?.title || 'Reelify 3D Neon Studio',
     currentSceneText:
       activeProject?.scenes?.[0]?.overlayText ||
@@ -372,6 +434,31 @@ export default function Studio3DScene({
   useEffect(() => {
     stateRef.current.isMusicPlaying = isMusicPlaying;
   }, [isMusicPlaying]);
+
+  useEffect(() => {
+    stateRef.current.photoRingEnabled = photoRingEnabled;
+  }, [photoRingEnabled]);
+
+  useEffect(() => {
+    stateRef.current.photoSpinSpeed = photoSpinSpeed;
+  }, [photoSpinSpeed]);
+
+  useEffect(() => {
+    stateRef.current.photoSpinDirection = photoSpinDirection;
+  }, [photoSpinDirection]);
+
+  useEffect(() => {
+    stateRef.current.photoSpinMode = photoSpinMode;
+  }, [photoSpinMode]);
+
+  useEffect(() => {
+    stateRef.current.photoRotationDeg = photoRotationDeg;
+    photoTexturesDirtyRef.current = true;
+  }, [photoRotationDeg]);
+
+  useEffect(() => {
+    stateRef.current.photoCount = stitchedPhotos.length;
+  }, [stitchedPhotos]);
 
   useEffect(() => {
     stateRef.current.videoBgMode = videoBgMode;
@@ -853,6 +940,367 @@ export default function Studio3DScene({
     }
     setSnapshotFeedback(true);
     setTimeout(() => setSnapshotFeedback(false), 2200);
+  };
+
+  // Extract frames from a video File or video URL for AI transcription & 3D scene regeneration
+  const extractKeyFramesFromVideoUrl = async (videoSrc: string, count = 4): Promise<{ frames: string[]; durationSec: number }> => {
+    return new Promise((resolve) => {
+      const vid = document.createElement('video');
+      vid.src = videoSrc;
+      vid.muted = true;
+      vid.playsInline = true;
+      vid.crossOrigin = 'anonymous';
+      const fallback = () => resolve({ frames: stitchedPhotos.slice(0, count), durationSec: 12 });
+      const timer = window.setTimeout(fallback, 6500);
+
+      vid.onloadedmetadata = async () => {
+        const dur = Number.isFinite(vid.duration) && vid.duration > 0 ? vid.duration : 12;
+        const canvas = document.createElement('canvas');
+        canvas.width = 512;
+        canvas.height = 288;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) {
+          clearTimeout(timer);
+          fallback();
+          return;
+        }
+        const extracted: string[] = [];
+        for (let i = 0; i < count; i++) {
+          const targetT = Math.min(dur - 0.1, ((i + 0.5) / count) * dur);
+          await new Promise<void>((r) => {
+            const onSeek = () => {
+              vid.removeEventListener('seeked', onSeek);
+              ctx.drawImage(vid, 0, 0, canvas.width, canvas.height);
+              extracted.push(canvas.toDataURL('image/jpeg', 0.76));
+              r();
+            };
+            vid.addEventListener('seeked', onSeek);
+            try {
+              vid.currentTime = Math.max(0, targetT);
+            } catch {
+              r();
+            }
+          });
+        }
+        clearTimeout(timer);
+        resolve({ frames: extracted, durationSec: Math.round(dur) });
+      };
+      vid.onerror = () => {
+        clearTimeout(timer);
+        fallback();
+      };
+    });
+  };
+
+  // Upload a video file AND transcribe + regenerate it into 3D scenes with AI
+  const handleUploadAndTranscribeVideoTo3D = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    e.target.value = '';
+    applyVideoFileAs3DBackground(file);
+    const objUrl = URL.createObjectURL(file);
+    await runTranscribeAndRegenerate3D(objUrl, file.name, file);
+  };
+
+  // Transcribe current video / scenes and regenerate in 3D with AI
+  const runTranscribeAndRegenerate3D = async (videoUrlOverride?: string, videoNameOverride?: string, rawFile?: File) => {
+    if (isTranscribingVideo3D) return;
+    setIsTranscribingVideo3D(true);
+    setInspectedPartName('IA Transcribiendo Video y Regenerando Escenarios 3D...');
+
+    try {
+      const targetVideoUrl = videoUrlOverride || uploaded3DVideoUrl;
+      const targetVideoName =
+        videoNameOverride || uploaded3DVideoName || activeProject?.title || 'Secuencia 3D';
+
+      let frames: string[] = [];
+      let durationSec = 12;
+
+      if (targetVideoUrl) {
+        const extracted = await extractKeyFramesFromVideoUrl(targetVideoUrl, 4);
+        frames = extracted.frames;
+        durationSec = extracted.durationSec;
+      } else if (stitchedPhotos.length > 0) {
+        frames = stitchedPhotos.slice(0, 4);
+      }
+
+      let mediaBase64: string | undefined;
+      let mediaMimeType = rawFile?.type || 'video/mp4';
+      if (rawFile && rawFile.size < 8 * 1024 * 1024) {
+        mediaBase64 = await new Promise<string>((res) => {
+          const reader = new FileReader();
+          reader.onload = () => res(String(reader.result || ''));
+          reader.onerror = () => res('');
+          reader.readAsDataURL(rawFile);
+        });
+      }
+
+      const response = await fetch('/api/ai/transcribe-video-3d', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          videoName: targetVideoName,
+          mediaBase64,
+          mediaMimeType,
+          frames,
+          prompt: scenarioTextInput,
+          durationSec,
+          sceneCount: Math.max(4, localScenes.length || 4),
+          targetPreset: subjectPreset,
+          regenerateVisuals: frames.length === 0,
+        }),
+      });
+
+      const data = await response.json();
+      if (Array.isArray(data.scenes) && data.scenes.length > 0) {
+        const updatedScenes: SceneItem[] = data.scenes.map((sc: any, idx: number) => ({
+          description: sc.description,
+          overlayText: sc.overlayText || sc.description,
+          duration: sc.duration || '4s',
+          scene3dPreset: sc.scene3dPreset || subjectPreset,
+          imageUrl: sc.imageUrl || frames[idx % Math.max(1, frames.length)],
+        }));
+        setLocalScenes(updatedScenes);
+        setActiveSceneIndex(0);
+        if (updatedScenes[0]?.scene3dPreset) {
+          setSubjectPreset(updatedScenes[0].scene3dPreset);
+          stateRef.current.subjectPreset = updatedScenes[0].scene3dPreset;
+        }
+        const newPhotos = updatedScenes.map((s) => s.imageUrl).filter((u): u is string => Boolean(u));
+        if (newPhotos.length > 0) {
+          setStitchedPhotos((prev) => Array.from(new Set([...newPhotos, ...prev])).slice(0, 12));
+          setPhotoRingEnabled(true);
+        }
+        const transcriptTxt = String(data.transcript || updatedScenes[0].overlayText || '');
+        setLastTranscriptSummary(transcriptTxt);
+        setScenarioTextInput(transcriptTxt.slice(0, 140));
+        stateRef.current.currentSceneText = transcriptTxt.slice(0, 140);
+        setInspectedPartName(`Video Transcrito y Regenerado en 3D (${updatedScenes.length} Escenas IA)`);
+        if (onSaveProjectScenes) {
+          onSaveProjectScenes(updatedScenes, targetVideoUrl || undefined);
+        }
+      }
+    } catch {
+      setInspectedPartName('Escenas 3D Regeneradas con IA');
+    } finally {
+      setIsTranscribingVideo3D(false);
+    }
+  };
+
+  // Upload multiple photos to stitch ("Juntar Fotos") and spin them in the 3D Orbital Ring
+  const handleUploadAndStitchPhotos3D = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files: File[] = e.target.files ? Array.from(e.target.files) : [];
+    if (files.length === 0) return;
+    e.target.value = '';
+
+    const loadedDataUrls: string[] = [];
+    for (const file of files.slice(0, 10)) {
+      const dataUrl = await new Promise<string>((resolve) => {
+        const reader = new FileReader();
+        reader.onload = () => {
+          const img = new Image();
+          img.onload = () => {
+            const canvas = document.createElement('canvas');
+            const maxD = 640;
+            let w = img.naturalWidth || 640;
+            let h = img.naturalHeight || 360;
+            if (w > maxD || h > maxD) {
+              if (w >= h) {
+                h = Math.round((h * maxD) / w);
+                w = maxD;
+              } else {
+                w = Math.round((w * maxD) / h);
+                h = maxD;
+              }
+            }
+            canvas.width = w;
+            canvas.height = h;
+            const ctx = canvas.getContext('2d');
+            if (ctx) {
+              ctx.drawImage(img, 0, 0, w, h);
+              resolve(canvas.toDataURL('image/jpeg', 0.8));
+            } else {
+              resolve(String(reader.result || ''));
+            }
+          };
+          img.onerror = () => resolve('');
+          img.src = String(reader.result || '');
+        };
+        reader.onerror = () => resolve('');
+        reader.readAsDataURL(file);
+      });
+      if (dataUrl) loadedDataUrls.push(dataUrl);
+    }
+
+    if (loadedDataUrls.length > 0) {
+      const combined = Array.from(new Set([...loadedDataUrls, ...stitchedPhotos])).slice(0, 12);
+      setStitchedPhotos(combined);
+      setPhotoRingEnabled(true);
+      stateRef.current.photoRingEnabled = true;
+      setIsPlaying(true);
+
+      // Also build a stitched panoramic collage image for the active scene / LED wall
+      const collageUrl = await buildStitchedCollageDataUrl(combined, photoRotationDeg);
+      if (collageUrl) {
+        const img = new Image();
+        img.crossOrigin = 'anonymous';
+        img.src = collageUrl;
+        sceneImgElRef.current = img;
+      }
+
+      const presets: SubjectPresetId[] = ['coupe', 'sculpture', 'drone', 'station', 'protein'];
+      const nextScenes: SceneItem[] = combined.map((pUrl, idx) => ({
+        description: `Foto #${idx + 1} unida en Galería Orbital 3D (${presets[idx % presets.length].toUpperCase()}) girando con IA.`,
+        overlayText: `FOTO 3D 0${idx + 1} · CARRUSEL ORBITAL 360° IA`,
+        duration: '4s',
+        scene3dPreset: presets[idx % presets.length],
+        imageUrl: pUrl,
+      }));
+      setLocalScenes(nextScenes);
+      if (onSaveProjectScenes) {
+        onSaveProjectScenes(nextScenes, uploaded3DVideoUrl || undefined);
+      }
+      setInspectedPartName(`${combined.length} Fotos Juntas Girando en Anillo 3D (360°)`);
+    }
+  };
+
+  // Build a stitched panoramic collage from multiple photos with optional rotation
+  const buildStitchedCollageDataUrl = async (photos: string[], rotDeg = 0): Promise<string | null> => {
+    if (photos.length === 0) return null;
+    const canvas = document.createElement('canvas');
+    canvas.width = 1024;
+    canvas.height = 512;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return null;
+
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    const cols = Math.min(4, Math.max(1, photos.length));
+    const rows = photos.length > 4 ? 2 : 1;
+    const cellW = canvas.width / cols;
+    const cellH = canvas.height / rows;
+
+    const loadedImgs = await Promise.all(
+      photos.slice(0, cols * rows).map(
+        (src) =>
+          new Promise<HTMLImageElement | null>((res) => {
+            const im = new Image();
+            im.crossOrigin = 'anonymous';
+            im.onload = () => res(im);
+            im.onerror = () => res(null);
+            im.src = src;
+          })
+      )
+    );
+
+    loadedImgs.forEach((im, idx) => {
+      if (!im) return;
+      const c = idx % cols;
+      const r = Math.floor(idx / cols);
+      const cx = c * cellW + cellW / 2;
+      const cy = r * cellH + cellH / 2;
+
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(c * cellW + 4, r * cellH + 4, cellW - 8, cellH - 8);
+      ctx.clip();
+      ctx.translate(cx, cy);
+      ctx.rotate((rotDeg * Math.PI) / 180);
+      ctx.drawImage(im, -cellW / 2, -cellH / 2, cellW, cellH);
+      ctx.restore();
+
+      ctx.strokeStyle = idx % 2 === 0 ? '#ff007f' : '#00e5ff';
+      ctx.lineWidth = 4;
+      ctx.strokeRect(c * cellW + 4, r * cellH + 4, cellW - 8, cellH - 8);
+    });
+
+    return canvas.toDataURL('image/jpeg', 0.82);
+  };
+
+  // Rotate all stitched photos by +90 degrees and update the 3D Orbital Ring + LED Wall
+  const handleRotateStitchedPhotos90 = async () => {
+    const nextDeg = (photoRotationDeg + 90) % 360;
+    setPhotoRotationDeg(nextDeg);
+    setPhotoRingEnabled(true);
+    stateRef.current.photoRotationDeg = nextDeg;
+    photoTexturesDirtyRef.current = true;
+    if (stitchedPhotos.length > 0) {
+      const collage = await buildStitchedCollageDataUrl(stitchedPhotos, nextDeg);
+      if (collage) {
+        const img = new Image();
+        img.crossOrigin = 'anonymous';
+        img.src = collage;
+        sceneImgElRef.current = img;
+      }
+    }
+    setInspectedPartName(`Fotos Giradas a ${nextDeg}° en Anillo Orbital 3D`);
+  };
+
+  // Stitch & Spin Photos in 3D with Gemini AI (/api/ai/stitch-rotate-photos-3d)
+  const handleStitchAndSpinWithAI = async (regenerateVisuals = false) => {
+    if (isStitchingAiPhotos) return;
+    const sourcePhotos =
+      stitchedPhotos.length > 0
+        ? stitchedPhotos
+        : localScenes.map((s) => s.imageUrl).filter((u): u is string => Boolean(u));
+
+    const snapFallback = capture3DFrameRef.current?.();
+    const effectivePhotos =
+      sourcePhotos.length > 0 ? sourcePhotos : snapFallback ? [snapFallback] : [];
+    if (effectivePhotos.length === 0) return;
+
+    setIsStitchingAiPhotos(true);
+    setPhotoRingEnabled(true);
+    stateRef.current.photoRingEnabled = true;
+    setIsPlaying(true);
+    setInspectedPartName('IA Juntando Fotos y Sincronizando Giro Orbital 3D...');
+
+    try {
+      const res = await fetch('/api/ai/stitch-rotate-photos-3d', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          photos: effectivePhotos,
+          rotationAngle: photoRotationDeg || 360,
+          spinDirection: photoSpinDirection === 1 ? 'right' : 'left',
+          prompt: scenarioTextInput,
+          scene3dPreset: subjectPreset,
+          regenerateWithAi: regenerateVisuals,
+        }),
+      });
+      const data = await res.json();
+      if (Array.isArray(data.photos) && data.photos.length > 0) {
+        setStitchedPhotos(data.photos);
+        const collage = await buildStitchedCollageDataUrl(data.photos, photoRotationDeg);
+        if (collage) {
+          const img = new Image();
+          img.crossOrigin = 'anonymous';
+          img.src = collage;
+          sceneImgElRef.current = img;
+        }
+      }
+      if (Array.isArray(data.scenes) && data.scenes.length > 0) {
+        setLocalScenes(data.scenes);
+        setActiveSceneIndex(0);
+        if (onSaveProjectScenes) {
+          onSaveProjectScenes(data.scenes, uploaded3DVideoUrl || undefined);
+        }
+      }
+      if (data.summary) {
+        setScenarioTextInput(String(data.summary).slice(0, 140));
+        stateRef.current.currentSceneText = String(data.summary).slice(0, 140);
+      }
+      // Switch to dynamic 3D self-spin + orbit mode so the user immediately sees the AI rotation effect
+      setPhotoSpinMode((prev) => (prev === 'orbit' ? 'self_spin' : 'helix_tilt'));
+      setInspectedPartName(
+        `¡${effectivePhotos.length} Fotos Juntas y Giradas en 3D con IA (${photoSpinDirection === 1 ? '↻ Derecha' : '↺ Izquierda'})!`
+      );
+    } catch {
+      setInspectedPartName('Carrusel 3D de Fotos Activo');
+    } finally {
+      setIsStitchingAiPhotos(false);
+    }
   };
 
   useEffect(() => {
@@ -1663,10 +2111,152 @@ export default function Studio3DScene({
     if (eqRingInstanced.instanceColor) eqRingInstanced.instanceColor.needsUpdate = true;
     turntableGroup.add(eqRingInstanced);
 
+    // 8c. 3D Orbital Photo Carousel Ring ("Juntar Fotos y Girarlas en 3D con IA")
+    const PHOTO_PANEL_COUNT = 8;
+    const photoRingGroup = new THREE.Group();
+    photoRingGroup.position.set(0, 1.55, 0);
+    scene.add(photoRingGroup);
+
+    const photoPanelGeo = new THREE.PlaneGeometry(1.36, 0.82);
+    const photoFrameGeo = new THREE.BoxGeometry(1.44, 0.9, 0.035);
+    const photoFramePinkMat = new THREE.MeshStandardMaterial({
+      color: 0xffffff,
+      emissive: 0xff007f,
+      emissiveIntensity: 1.4,
+      roughness: 0.2,
+      metalness: 0.8,
+    });
+    const photoFrameCyanMat = new THREE.MeshStandardMaterial({
+      color: 0xffffff,
+      emissive: 0x00e5ff,
+      emissiveIntensity: 1.4,
+      roughness: 0.2,
+      metalness: 0.8,
+    });
+
+    interface OrbitalPhotoCard {
+      holder: THREE.Group;
+      canvas: HTMLCanvasElement;
+      ctx: CanvasRenderingContext2D;
+      tex: THREE.CanvasTexture;
+      mat: THREE.MeshBasicMaterial;
+      baseAngle: number;
+    }
+
+    const orbitalPhotoCards: OrbitalPhotoCard[] = [];
+    const ringOrbitRadius = 3.25;
+
+    for (let i = 0; i < PHOTO_PANEL_COUNT; i++) {
+      const holder = new THREE.Group();
+      const baseAngle = (i / PHOTO_PANEL_COUNT) * Math.PI * 2;
+      holder.position.set(Math.cos(baseAngle) * ringOrbitRadius, ((i % 2) - 0.5) * 0.24, Math.sin(baseAngle) * ringOrbitRadius);
+      holder.rotation.y = -baseAngle + Math.PI / 2;
+
+      const frameMesh = new THREE.Mesh(photoFrameGeo, i % 2 === 0 ? photoFramePinkMat : photoFrameCyanMat);
+      frameMesh.userData.partName = `Panel Holográfico 3D · Foto Unida #0${i + 1} (Girando con IA)`;
+      holder.add(frameMesh);
+
+      const pCanvas = document.createElement('canvas');
+      pCanvas.width = 384;
+      pCanvas.height = 240;
+      const pCtx = pCanvas.getContext('2d')!;
+      const pTex = new THREE.CanvasTexture(pCanvas);
+      pTex.colorSpace = THREE.SRGBColorSpace;
+
+      const pMat = new THREE.MeshBasicMaterial({
+        map: pTex,
+        side: THREE.DoubleSide,
+      });
+
+      const frontPlane = new THREE.Mesh(photoPanelGeo, pMat);
+      frontPlane.position.z = 0.022;
+      frontPlane.userData.partName = `Fotografía 3D #0${i + 1} en Carrusel Orbital IA`;
+      holder.add(frontPlane);
+
+      const backPlane = new THREE.Mesh(photoPanelGeo, pMat);
+      backPlane.position.z = -0.022;
+      backPlane.rotation.y = Math.PI;
+      backPlane.userData.partName = `Fotografía 3D #0${i + 1} (Reverso 360°)`;
+      holder.add(backPlane);
+
+      photoRingGroup.add(holder);
+      orbitalPhotoCards.push({
+        holder,
+        canvas: pCanvas,
+        ctx: pCtx,
+        tex: pTex,
+        mat: pMat,
+        baseAngle,
+      });
+    }
+
+    function refreshOrbitalPhotoCardTextures() {
+      const imgs = loadedPhotoElsRef.current;
+      const singleImg = sceneImgElRef.current;
+      const rotRad = ((stateRef.current.photoRotationDeg || 0) * Math.PI) / 180;
+
+      for (let i = 0; i < orbitalPhotoCards.length; i++) {
+        const card = orbitalPhotoCards[i];
+        const cw = card.canvas.width;
+        const ch = card.canvas.height;
+        const ctx = card.ctx;
+
+        const g = ctx.createLinearGradient(0, 0, cw, ch);
+        g.addColorStop(0, '#ffffff');
+        g.addColorStop(0.5, '#f0f9ff');
+        g.addColorStop(1, '#fdf4ff');
+        ctx.fillStyle = g;
+        ctx.fillRect(0, 0, cw, ch);
+
+        const targetImg =
+          imgs.length > 0
+            ? imgs[i % imgs.length]
+            : singleImg && singleImg.complete && (singleImg.naturalWidth > 0 || singleImg.width > 0)
+            ? singleImg
+            : null;
+
+        if (targetImg && targetImg.complete && (targetImg.naturalWidth > 0 || targetImg.width > 0)) {
+          ctx.save();
+          ctx.translate(cw / 2, ch / 2);
+          ctx.rotate(rotRad);
+          ctx.drawImage(targetImg, -cw / 2, -ch / 2, cw, ch);
+          ctx.restore();
+        } else {
+          ctx.strokeStyle = i % 2 === 0 ? 'rgba(255, 0, 127, 0.45)' : 'rgba(0, 229, 255, 0.45)';
+          ctx.lineWidth = 2;
+          for (let x = 0; x <= cw; x += 32) {
+            ctx.beginPath();
+            ctx.moveTo(x, 0);
+            ctx.lineTo(x, ch);
+            ctx.stroke();
+          }
+          ctx.fillStyle = '#7c3aed';
+          ctx.font = 'bold 18px "Plus Jakarta Sans", sans-serif';
+          ctx.fillText(`FOTO 3D #0${i + 1} · IA 360°`, 24, ch / 2);
+        }
+
+        // Top-left neon badge on each 3D photo panel
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.92)';
+        ctx.fillRect(8, ch - 34, cw - 16, 26);
+        ctx.strokeStyle = i % 2 === 0 ? '#ff007f' : '#00e5ff';
+        ctx.lineWidth = 2;
+        ctx.strokeRect(8, ch - 34, cw - 16, 26);
+        ctx.fillStyle = i % 2 === 0 ? '#ff007f' : '#00b8d4';
+        ctx.font = 'bold 12px "JetBrains Mono", monospace';
+        const degLabel = stateRef.current.photoRotationDeg ? ` · ${stateRef.current.photoRotationDeg}°` : '';
+        ctx.fillText(`FOTO 0${(i % Math.max(1, imgs.length || 1)) + 1} JUNTAS EN 3D${degLabel}`, 16, ch - 16);
+
+        card.tex.needsUpdate = true;
+      }
+    }
+
+    refreshOrbitalPhotoCardTextures();
+
     // 9. Throttled Raycasting
     const raycaster = new THREE.Raycaster();
     const pointer = new THREE.Vector2();
     const inspectableMeshes: THREE.Object3D[] = [
+      photoRingGroup,
       ledWallMesh,
       pedestalMesh,
       chassisMesh,
@@ -2040,6 +2630,37 @@ export default function Studio3DScene({
         if (eqRingInstanced.instanceColor) eqRingInstanced.instanceColor.needsUpdate = true;
       }
 
+      // --- UPDATE 3D ORBITAL PHOTO CAROUSEL RING ("FOTOS JUNTAS GIRANDO EN 3D CON IA") ---
+      photoRingGroup.visible = st.photoRingEnabled;
+      if (st.photoRingEnabled) {
+        if (photoTexturesDirtyRef.current) {
+          refreshOrbitalPhotoCardTextures();
+          photoTexturesDirtyRef.current = false;
+        }
+        const spinVel = st.photoSpinSpeed * st.photoSpinDirection * (1 + smoothedBass * 0.45);
+        if (st.isPlaying || st.isMusicPlaying) {
+          photoRingGroup.rotation.y += delta * spinVel * 0.85;
+        }
+        if (st.photoSpinMode === 'helix_tilt') {
+          photoRingGroup.rotation.z = Math.sin(elapsed * 0.9) * 0.24;
+          photoRingGroup.rotation.x = Math.cos(elapsed * 0.7) * 0.18;
+        } else {
+          photoRingGroup.rotation.z = THREE.MathUtils.damp(photoRingGroup.rotation.z, 0, 6, delta);
+          photoRingGroup.rotation.x = THREE.MathUtils.damp(photoRingGroup.rotation.x, 0, 6, delta);
+        }
+
+        for (let i = 0; i < orbitalPhotoCards.length; i++) {
+          const card = orbitalPhotoCards[i];
+          const waveY = Math.sin(elapsed * 2.2 + i * 0.8) * (0.12 + smoothedMid * 0.18);
+          card.holder.position.y = ((i % 2) - 0.5) * 0.22 + waveY;
+          if (st.photoSpinMode === 'self_spin') {
+            card.holder.rotation.y += delta * spinVel * 1.6;
+          } else {
+            card.holder.rotation.y = -card.baseAngle + Math.PI / 2;
+          }
+        }
+      }
+
       ledFrameCounter++;
       if (ledFrameCounter % 2 === 0) {
         updateLedVolumeTexture(elapsed);
@@ -2184,6 +2805,14 @@ export default function Studio3DScene({
       particleMat.dispose();
       eqBarGeo.dispose();
       eqBarMat.dispose();
+      photoPanelGeo.dispose();
+      photoFrameGeo.dispose();
+      photoFramePinkMat.dispose();
+      photoFrameCyanMat.dispose();
+      orbitalPhotoCards.forEach((c) => {
+        c.tex.dispose();
+        c.mat.dispose();
+      });
       ledCanvasTex.dispose();
       videoSkyDomeGeo.dispose();
       videoSkyDomeMat.dispose();
@@ -2303,13 +2932,13 @@ export default function Studio3DScene({
           )}
         </div>
 
-        {/* Zone 3: AI Music Rhythm Generator, Upload Dynamic Video Background, Camera, Snapshot, Save & Navigation */}
-        <div className="flex items-center gap-2 shrink-0">
+        {/* Zone 3: AI Music Rhythm Generator, Transcribe Video to 3D, Stitch & Spin Photos 3D, Upload Video Background, Camera, Snapshot, Save & Navigation */}
+        <div className="flex items-center gap-1.5 shrink-0 flex-wrap justify-end">
           <button
             type="button"
             disabled={isGeneratingMusic}
             onClick={handleGenerateAndPlayRhythmMusic}
-            className="px-3 py-1.5 text-xs font-extrabold text-white bg-gradient-to-r from-fuchsia-600 via-violet-600 to-cyan-500 hover:from-fuchsia-500 hover:to-cyan-400 rounded-lg transition-all flex items-center gap-1.5 whitespace-nowrap shrink-0 shadow-md disabled:opacity-60"
+            className="px-2.5 py-1.5 text-xs font-extrabold text-white bg-gradient-to-r from-fuchsia-600 via-violet-600 to-cyan-500 hover:from-fuchsia-500 hover:to-cyan-400 rounded-lg transition-all flex items-center gap-1 whitespace-nowrap shrink-0 shadow-md disabled:opacity-60"
             title="Generar música con IA (Lyria) y hacer que las partículas 3D reaccionen al ritmo automáticamente"
           >
             {isGeneratingMusic ? (
@@ -2317,11 +2946,49 @@ export default function Studio3DScene({
             ) : (
               <Music className="w-3.5 h-3.5 text-white" />
             )}
-            <span>{isGeneratingMusic ? 'Generando Ritmo IA...' : 'Música IA · Partículas 3D'}</span>
+            <span>{isGeneratingMusic ? 'Ritmo IA...' : 'Música IA · Partículas 3D'}</span>
           </button>
 
           <label
-            className="cursor-pointer px-3 py-1.5 text-xs font-bold text-fuchsia-600 bg-white hover:bg-fuchsia-50 border border-fuchsia-400 rounded-lg transition-all flex items-center gap-1.5 whitespace-nowrap shrink-0"
+            className="cursor-pointer px-2.5 py-1.5 text-xs font-extrabold text-white bg-violet-600 hover:bg-violet-500 border border-violet-400 rounded-lg transition-all flex items-center gap-1 whitespace-nowrap shrink-0 shadow-sm"
+            title="Subir y transcribir un video con IA para agregarlo generando escenas 3D automáticamente"
+          >
+            {isTranscribingVideo3D ? (
+              <Loader2 className="w-3.5 h-3.5 text-white animate-spin" />
+            ) : (
+              <FileText className="w-3.5 h-3.5 text-white" />
+            )}
+            <span>{isTranscribingVideo3D ? 'Transcribiendo 3D...' : 'Transcribir Video → 3D'}</span>
+            <input
+              type="file"
+              accept="video/*,audio/*,.mp4,.webm,.mov,.mp3,.wav"
+              onChange={handleUploadAndTranscribeVideoTo3D}
+              className="hidden"
+            />
+          </label>
+
+          <button
+            type="button"
+            disabled={isTranscribingVideo3D}
+            onClick={() => runTranscribeAndRegenerate3D()}
+            className="px-2.5 py-1.5 text-xs font-extrabold text-fuchsia-600 bg-white hover:bg-fuchsia-50 border border-fuchsia-400 rounded-lg transition-all flex items-center gap-1 whitespace-nowrap shrink-0 disabled:opacity-60"
+            title="Regenerar y transcribir el video o las escenas actuales en 3D con ayuda de la IA"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 text-fuchsia-600 ${isTranscribingVideo3D ? 'animate-spin' : ''}`} />
+            <span>Regenerar 3D IA</span>
+          </button>
+
+          <label
+            className="cursor-pointer px-2.5 py-1.5 text-xs font-bold text-cyan-700 bg-white hover:bg-cyan-50 border border-cyan-400 rounded-lg transition-all flex items-center gap-1 whitespace-nowrap shrink-0"
+            title="Juntar varias fotos para unirlas y girarlas en el carrusel 3D con IA"
+          >
+            <ImageIcon className="w-3.5 h-3.5 text-fuchsia-600" />
+            <span>Juntar Fotos 3D ({stitchedPhotos.length})</span>
+            <input type="file" accept="image/*" multiple onChange={handleUploadAndStitchPhotos3D} className="hidden" />
+          </label>
+
+          <label
+            className="cursor-pointer px-2.5 py-1.5 text-xs font-bold text-fuchsia-600 bg-white hover:bg-fuchsia-50 border border-fuchsia-400 rounded-lg transition-all flex items-center gap-1 whitespace-nowrap shrink-0"
             title="Subir un archivo de video (.mp4, .webm, .mov) para usarlo como fondo dinámico del estudio 3D"
           >
             <Upload className="w-3.5 h-3.5 text-fuchsia-600" />
@@ -2579,19 +3246,141 @@ export default function Studio3DScene({
                 setScenarioTextInput(e.target.value);
                 stateRef.current.currentSceneText = e.target.value;
               }}
-              placeholder="Escribe el texto neón en pantalla para este escenario 3D..."
+              placeholder="Escribe el texto neón en pantalla o la transcripción para este escenario 3D..."
               className="flex-1 bg-white border-2 border-cyan-400 focus:border-fuchsia-500 rounded-lg px-3 py-1.5 text-xs text-fuchsia-700 font-semibold outline-none"
             />
             <button
               type="button"
               onClick={handleCreateScenarioText}
-              className="px-3.5 py-1.5 rounded-lg bg-gradient-to-r from-fuchsia-600 via-violet-600 to-cyan-500 hover:from-fuchsia-500 hover:to-cyan-400 text-white text-xs font-bold flex items-center gap-1.5 whitespace-nowrap shrink-0 transition-all shadow-md"
+              className="px-3 py-1.5 rounded-lg bg-gradient-to-r from-fuchsia-600 via-violet-600 to-cyan-500 hover:from-fuchsia-500 hover:to-cyan-400 text-white text-xs font-bold flex items-center gap-1.5 whitespace-nowrap shrink-0 transition-all shadow-md"
               title="Crear y aplicar letras neón en pantalla al escenario 3D actual"
             >
               {textFeedback ? <Check className="w-3.5 h-3.5 text-white" /> : <TypeIcon className="w-3.5 h-3.5 text-white" />}
-              <span>{textFeedback ? '¡Texto Neón Aplicado!' : 'Aplicar Texto Neón'}</span>
+              <span>{textFeedback ? '¡Texto Aplicado!' : 'Aplicar Texto Neón'}</span>
             </button>
           </div>
+
+          {/* 3D Photo Stitcher & AI 360° Spin Controls + Video Transcription Bar */}
+          <div className="flex flex-wrap items-center justify-between gap-2 pt-1.5 border-t border-cyan-200 text-xs">
+            <div className="flex flex-wrap items-center gap-1.5">
+              <button
+                type="button"
+                onClick={() => setPhotoRingEnabled((prev) => !prev)}
+                className={`px-2.5 py-1 rounded-lg text-[11px] font-extrabold flex items-center gap-1 transition-all border ${
+                  photoRingEnabled
+                    ? 'bg-violet-600 text-white border-violet-400 shadow-xs'
+                    : 'bg-white text-violet-700 border-cyan-400 hover:bg-cyan-50'
+                }`}
+                title="Mostrar u ocultar el anillo orbital 3D de fotos juntas"
+              >
+                <ImageIcon className="w-3.5 h-3.5" />
+                <span>Fotos 3D ({stitchedPhotos.length}): {photoRingEnabled ? 'ON' : 'OFF'}</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setPhotoRingEnabled(true);
+                  setPhotoSpinDirection((prev) => (prev === 1 ? -1 : 1));
+                }}
+                className="px-2 py-1 rounded-lg bg-white hover:bg-fuchsia-50 border border-fuchsia-400 text-[11px] font-bold text-fuchsia-600 flex items-center gap-1"
+                title="Cambiar dirección de giro 3D de las fotos (Izquierda / Derecha)"
+              >
+                {photoSpinDirection === 1 ? <RotateCw className="w-3 h-3" /> : <RotateCcw className="w-3 h-3" />}
+                <span>{photoSpinDirection === 1 ? 'Giro 3D ↻' : 'Giro 3D ↺'}</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={handleRotateStitchedPhotos90}
+                className="px-2 py-1 rounded-lg bg-white hover:bg-cyan-50 border border-cyan-400 text-[11px] font-bold text-cyan-700 flex items-center gap-1"
+                title="Rotar el ángulo de las fotos unidas (+90° / 180° / 270° / 360°)"
+              >
+                <RotateCw className="w-3 h-3 text-fuchsia-600" />
+                <span>Rotar Fotos ({photoRotationDeg}°)</span>
+              </button>
+
+              {(
+                [
+                  { id: 'orbit', label: 'Órbita 360°' },
+                  { id: 'self_spin', label: 'Giro Doble IA' },
+                  { id: 'helix_tilt', label: 'Hélice 3D' },
+                ] as { id: PhotoSpinModeId; label: string }[]
+              ).map((mode) => (
+                <button
+                  key={mode.id}
+                  type="button"
+                  onClick={() => {
+                    setPhotoRingEnabled(true);
+                    setPhotoSpinMode(mode.id);
+                  }}
+                  className={`px-2 py-1 rounded-lg text-[11px] font-bold transition-colors ${
+                    photoRingEnabled && photoSpinMode === mode.id
+                      ? 'bg-fuchsia-600 text-white'
+                      : 'bg-white text-violet-700 border border-cyan-300 hover:bg-cyan-50'
+                  }`}
+                >
+                  {mode.label}
+                </button>
+              ))}
+
+              <div className="flex items-center gap-1 bg-white px-2 py-0.5 rounded-lg border border-cyan-400">
+                <span className="text-[10px] font-mono font-bold text-fuchsia-600">Vel. Giro</span>
+                <input
+                  type="range"
+                  min={0.2}
+                  max={3.0}
+                  step={0.1}
+                  value={photoSpinSpeed}
+                  onChange={(e) => setPhotoSpinSpeed(parseFloat(e.target.value))}
+                  className="w-14 accent-fuchsia-600 cursor-pointer"
+                />
+              </div>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-1.5">
+              <button
+                type="button"
+                disabled={isStitchingAiPhotos}
+                onClick={() => handleStitchAndSpinWithAI(false)}
+                className="px-2.5 py-1 rounded-lg bg-gradient-to-r from-fuchsia-600 via-violet-600 to-cyan-500 hover:from-fuchsia-500 hover:to-cyan-400 text-white text-[11px] font-extrabold flex items-center gap-1 shadow-xs disabled:opacity-60"
+                title="Juntar todas las fotos y girarlas automáticamente en 3D con la IA"
+              >
+                {isStitchingAiPhotos ? (
+                  <Loader2 className="w-3 h-3 animate-spin" />
+                ) : (
+                  <Sparkles className="w-3 h-3" />
+                )}
+                <span>{isStitchingAiPhotos ? 'Girando con IA...' : 'Juntar y Girar Fotos con IA'}</span>
+              </button>
+
+              <button
+                type="button"
+                disabled={isStitchingAiPhotos}
+                onClick={() => handleStitchAndSpinWithAI(true)}
+                className="px-2.5 py-1 rounded-lg bg-white hover:bg-fuchsia-50 border border-fuchsia-400 text-fuchsia-600 text-[11px] font-extrabold flex items-center gap-1 disabled:opacity-60"
+                title="Regenerar visualmente las fotos unidas con IA y girarlas en 3D"
+              >
+                <RefreshCw className={`w-3 h-3 ${isStitchingAiPhotos ? 'animate-spin' : ''}`} />
+                <span>Regenerar Fotos 3D IA</span>
+              </button>
+            </div>
+          </div>
+
+          {lastTranscriptSummary && (
+            <div className="px-3 py-1.5 rounded-lg bg-cyan-50 border border-cyan-400 text-[11px] text-violet-900 font-medium flex items-center justify-between gap-2">
+              <span className="truncate">
+                <strong className="text-fuchsia-600">Transcripción 3D IA:</strong> {lastTranscriptSummary}
+              </span>
+              <button
+                type="button"
+                onClick={() => setLastTranscriptSummary('')}
+                className="text-[10px] font-bold text-rose-600 hover:underline shrink-0"
+              >
+                Ocultar
+              </button>
+            </div>
+          )}
         </div>
       )}
 
