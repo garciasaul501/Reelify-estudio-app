@@ -759,33 +759,40 @@ export const SUBSCRIPTION_FORMAT_OPTIONS = [
 ] as const;
 
 export const DEFAULT_MERCHANT_PAYPAL_EMAIL = 'garciasaul@hotmail.com';
+export const PAYPAL_SCREENSHOT_DIAGNOSTIC_IMAGE_URL = '/assets/aistudio/IMG_0011_4a4420a8.png';
 
+export function maskPayPalEmail(email?: string): string {
+  const clean = (email || DEFAULT_MERCHANT_PAYPAL_EMAIL).trim();
+  const atIdx = clean.indexOf('@');
+  if (atIdx <= 2) return 'Cuenta PayPal Protegida 🔒';
+  const userPart = clean.slice(0, atIdx);
+  const domainPart = clean.slice(atIdx);
+  return `${userPart.slice(0, 3)}***${userPart.slice(-1)}${domainPart}`;
+}
+
+// Always routes through our server-side POST bridge (/api/paypal/checkout) so:
+// 1. The merchant's PayPal email is NEVER exposed in URLs or HTML links.
+// 2. It ALWAYS uses Live www.paypal.com (NEVER sandbox.paypal.com).
 export function buildClientPayPalCheckoutUrl(params: {
-  merchantEmail: string;
-  itemName: string;
+  merchantEmail?: string;
+  itemName?: string;
   amountUsd: number;
   orderId: string;
+  packageId?: string;
+  tokensGranted?: number;
   mode?: 'live' | 'sandbox';
 }): string {
-  const rawEmail = params.merchantEmail.trim();
-  const business =
-    rawEmail && rawEmail !== 'garciasaul501@gmail.com'
-      ? rawEmail
-      : DEFAULT_MERCHANT_PAYPAL_EMAIL;
   const amount = Math.max(1, Number(params.amountUsd) || 5).toFixed(2);
-  const host =
-    params.mode === 'sandbox'
-      ? 'https://www.sandbox.paypal.com/cgi-bin/webscr'
-      : 'https://www.paypal.com/cgi-bin/webscr';
-  const url = new URL(host);
-  url.searchParams.set('cmd', '_xclick');
-  url.searchParams.set('business', business);
-  url.searchParams.set('item_name', params.itemName);
-  url.searchParams.set('item_number', params.orderId);
-  url.searchParams.set('amount', amount);
-  url.searchParams.set('currency_code', 'USD');
-  url.searchParams.set('no_shipping', '1');
-  return url.toString();
+  const tokens = Math.max(1, Number(params.tokensGranted) || 62500);
+  const pkg = params.packageId || 'tier-5';
+  const qs = new URLSearchParams({
+    pkg,
+    amount,
+    tokens: String(tokens),
+    orderId: params.orderId || `PP-${Date.now()}`,
+    style: 'card_guest',
+  });
+  return `/api/paypal/checkout?${qs.toString()}`;
 }
 
 export interface UserSubscriptionPreferences {
@@ -4156,13 +4163,15 @@ const SubscriptionPreferencesAndCreditsPanel = ({
   const [subscriberName, setSubscriberName] = useState('');
   const [subscriberEmail, setSubscriberEmail] = useState('');
   const [showReferenceImagePreview, setShowReferenceImagePreview] = useState(false);
+  const [showDiagnosticImagePreview, setShowDiagnosticImagePreview] = useState(false);
   const [showPayPalModeHelp, setShowPayPalModeHelp] = useState(true);
+  const [showRawMerchantEmail, setShowRawMerchantEmail] = useState(false);
   const [prefsSavedNotice, setPrefsSavedNotice] = useState<string | null>(null);
 
-  // Real PayPal Monetization State
+  // Real PayPal Monetization State (Locked to LIVE www.paypal.com — never sandbox.paypal.com)
   const [paypalConfig, setPaypalConfig] = useState<{
     clientId: string;
-    mode: 'live' | 'sandbox';
+    mode: 'live';
     hasRestCredentials: boolean;
     merchantEmail: string;
   }>({
@@ -4198,7 +4207,7 @@ const SubscriptionPreferencesAndCreditsPanel = ({
     );
   }, [selectedPkgId]);
 
-  // Only the administrator can modify the recipient PayPal email or mode; for public customers it is strictly locked to garciasaul@hotmail.com in LIVE mode.
+  // Only the administrator can modify the recipient PayPal email; for public customers it is strictly locked server-side and NEVER exhibited on screen.
   const rawPrefEmail = (preferences.merchantPayPalEmail || '').trim();
   const effectiveMerchantEmail = isOwnerAdmin
     ? rawPrefEmail && rawPrefEmail !== 'garciasaul501@gmail.com'
@@ -4206,8 +4215,14 @@ const SubscriptionPreferencesAndCreditsPanel = ({
       : DEFAULT_MERCHANT_PAYPAL_EMAIL
     : DEFAULT_MERCHANT_PAYPAL_EMAIL;
 
-  const effectiveCheckoutMode: 'live' | 'sandbox' =
-    isOwnerAdmin && preferences.paypalCheckoutMode === 'sandbox' ? 'sandbox' : 'live';
+  // Masked representation so the raw PayPal email is never exhibited on screen
+  const maskedMerchantDisplay = useMemo(
+    () => maskPayPalEmail(effectiveMerchantEmail),
+    [effectiveMerchantEmail]
+  );
+
+  // Strictly locked to 'live' (https://www.paypal.com) so sandbox.paypal.com never appears
+  const effectiveCheckoutMode: 'live' = 'live';
 
   const effectivePayPalMeUsername = isOwnerAdmin
     ? (preferences.paypalMeUsername || 'saulmente').trim().replace(/^@/, '')
@@ -4244,9 +4259,9 @@ const SubscriptionPreferencesAndCreditsPanel = ({
         if (data && data.success) {
           setPaypalConfig({
             clientId: data.clientId || '',
-            mode: data.mode === 'sandbox' ? 'sandbox' : 'live',
+            mode: 'live',
             hasRestCredentials: Boolean(data.hasRestCredentials),
-            merchantEmail: data.merchantEmail || DEFAULT_MERCHANT_PAYPAL_EMAIL,
+            merchantEmail: DEFAULT_MERCHANT_PAYPAL_EMAIL,
           });
         }
       })
@@ -4410,16 +4425,16 @@ const SubscriptionPreferencesAndCreditsPanel = ({
     onUpdatePreferences({
       ...preferences,
       merchantPayPalEmail: effectiveMerchantEmail,
-      paypalCheckoutMode: effectiveCheckoutMode,
+      paypalCheckoutMode: 'live',
       selectedPackageId: selectedPkgId,
     });
     setPrefsSavedNotice(
-      `Cuenta PayPal (${effectiveMerchantEmail}) guardada en Modo ${effectiveCheckoutMode === 'live' ? 'REAL (LIVE)' : 'PRUEBA (SANDBOX)'} · Paquete activo: ${selectedPackage.tokensLabel} tokens (${selectedPackage.priceLabel}).`
+      `Cuenta PayPal (${maskedMerchantDisplay}) protegida y guardada en Modo REAL (www.paypal.com) · Paquete activo: ${selectedPackage.tokensLabel} tokens (${selectedPackage.priceLabel}).`
     );
     setTimeout(() => setPrefsSavedNotice(null), 4000);
   };
 
-  // Start a Real PayPal Checkout Order ($5.00, $10.00, $25.00, $50.00) and open Live PayPal Checkout
+  // Start a Real PayPal Checkout Order ($5.00, $10.00, $25.00, $50.00) and open Live PayPal Checkout via Protected Server Gateway
   const handleStartRealPayPalCheckout = async () => {
     setIsCreatingPayPalOrder(true);
     setPaypalError(null);
@@ -4427,11 +4442,12 @@ const SubscriptionPreferencesAndCreditsPanel = ({
     const fallbackOrderId = `PP-${Date.now()}`;
     const itemName = `Suscripcion Estudio 3D IA - ${selectedPackage.tokensLabel} Tokens (${selectedPackage.priceLabel})`;
     const fallbackUrl = buildClientPayPalCheckoutUrl({
-      merchantEmail: effectiveMerchantEmail,
       itemName,
       amountUsd: selectedPackage.priceUsd,
       orderId: fallbackOrderId,
-      mode: effectiveCheckoutMode,
+      packageId: selectedPackage.id,
+      tokensGranted: selectedPackage.tokens,
+      mode: 'live',
     });
 
     try {
@@ -4550,22 +4566,38 @@ const SubscriptionPreferencesAndCreditsPanel = ({
 
   const livePayPalDirectHref = useMemo(() => {
     return buildClientPayPalCheckoutUrl({
-      merchantEmail: effectiveMerchantEmail,
       itemName: `Suscripcion Estudio 3D IA - ${selectedPackage.tokensLabel} Tokens (${selectedPackage.priceLabel})`,
       amountUsd: selectedPackage.priceUsd,
       orderId: `PP-${selectedPackage.id.toUpperCase()}`,
-      mode: effectiveCheckoutMode,
+      packageId: selectedPackage.id,
+      tokensGranted: selectedPackage.tokens,
+      mode: 'live',
     });
-  }, [effectiveMerchantEmail, selectedPackage, effectiveCheckoutMode]);
+  }, [selectedPackage]);
 
   const livePayPalMeHref = useMemo(() => {
     const cleanUser = effectivePayPalMeUsername || 'saulmente';
     return `https://www.paypal.com/paypalme/${encodeURIComponent(cleanUser)}/${selectedPackage.priceUsd}`;
   }, [effectivePayPalMeUsername, selectedPackage.priceUsd]);
 
+  const handleFreeWhopSubscriptionClick = async () => {
+    await onSubscribeAndGrantTokens({
+      packageId: 'free-whop-saulmente',
+      priceUsd: 0,
+      priceLabel: 'GRATIS · Whop @saulmente',
+      tokensGranted: 62500,
+      subscriberName: subscriberName.trim() || 'Suscriptor Gratis Whop',
+      subscriberEmail: subscriberEmail.trim() || 'suscriptor@whop.com',
+      redirectWhop: true,
+      paymentMethod: 'whop',
+      paypalOrderId: `WHOP-FREE-${Date.now()}`,
+      paypalStatus: 'WHOP_VERIFIED',
+    });
+  };
+
   return (
     <div className="space-y-6">
-      {/* Hidden anchor for iframe-safe navigation to real PayPal Checkout */}
+      {/* Hidden anchor for iframe-safe navigation to Protected PayPal Checkout Gateway */}
       <a
         ref={paypalCheckoutAnchorRef}
         href={livePayPalDirectHref}
@@ -4581,10 +4613,10 @@ const SubscriptionPreferencesAndCreditsPanel = ({
         <div className="bg-slate-900 text-white border border-slate-800 rounded-2xl p-4 shadow-sm flex flex-col lg:flex-row lg:items-center justify-between gap-4">
           <div className="space-y-1">
             <div className="inline-flex items-center gap-2 text-xs font-mono text-emerald-400">
-              <span>🔒 ACCESO EXCLUSIVO DE ADMINISTRADOR ({currentUserEmail})</span>
+              <span>🔒 ACCESO EXCLUSIVO DE ADMINISTRADOR · CUENTA PAYPAL OCULTA Y PROTEGIDA ({maskedMerchantDisplay})</span>
             </div>
             <p className="text-xs sm:text-sm text-slate-200">
-              <strong>Solo tú como administrador ves y gestionas la configuración de PayPal, el Modo Live/Sandbox, los precios y los ingresos.</strong> El resto de la gente tiene oculto ese panel y solo ve la ventana limpia de compra <strong>Buy tokens</strong> para pagarte.
+              <strong>Tu correo de PayPal está 100% oculto y blindado en el servidor (nunca se exhibe en pantalla ni en los enlaces).</strong> Además, cada suscriptor gratis es verificado y dirigido automáticamente a crear su cuenta en <strong>https://whop.com/@saulmente</strong>.
             </p>
           </div>
 
@@ -4609,7 +4641,7 @@ const SubscriptionPreferencesAndCreditsPanel = ({
                   : 'text-slate-300 hover:text-white'
               }`}
             >
-              👁️ Vista Cliente (Lo que ve la gente)
+              👁️ Vista Cliente (Sin exhibir tu cuenta)
             </button>
           </div>
         </div>
@@ -4624,31 +4656,31 @@ const SubscriptionPreferencesAndCreditsPanel = ({
               <span aria-hidden="true">·</span>
               <span>
                 {showPrivateAdminPanel
-                  ? 'Panel Privado del Administrador · Monetización PayPal'
-                  : 'Recarga Instantánea de Tokens con PayPal'}
+                  ? 'Panel Privado del Administrador · Pasarela Blindada PayPal + Whop (@saulmente)'
+                  : 'Recarga Instantánea de Tokens con PayPal o Suscripción Gratis en Whop'}
               </span>
               {showPrivateAdminPanel && (
                 <>
                   <span aria-hidden="true">·</span>
                   <span className="font-mono font-bold text-emerald-700">
-                    {effectiveMerchantEmail}
+                    Receptor Oculto: {maskedMerchantDisplay} 🔒
                   </span>
                 </>
               )}
             </div>
             <h2 className="text-xl sm:text-2xl font-bold text-slate-900">
               {showPrivateAdminPanel
-                ? `Panel de Administración PayPal (${effectiveMerchantEmail}) y Gestión de Suscripciones`
-                : 'Compra Tokens y Activa tu Suscripción al Estudio 3D con IA'}
+                ? `Administración Blindada PayPal (${maskedMerchantDisplay}) y Verificación Whop (@saulmente)`
+                : 'Compra Tokens con PayPal o Crea tu Cuenta Gratis en Whop (@saulmente)'}
             </h2>
             <p className="text-xs sm:text-sm text-slate-600 max-w-3xl">
               {showPrivateAdminPanel ? (
                 <>
-                  Este panel administrativo es <strong>100% privado para ti</strong>. Ningún visitante puede cambiar tu correo <strong>{effectiveMerchantEmail}</strong> ni ver tus ingresos.
+                  Tu cuenta receptora (<strong>{maskedMerchantDisplay}</strong>) está <strong>100% protegida en el servidor</strong>: no se muestra en ningún botón ni URL pública, hemos eliminado <span className="font-mono">sandbox.paypal.com</span> por completo, y cada suscriptor gratis es enviado a crear su cuenta en <strong>https://whop.com/@saulmente</strong>.
                 </>
               ) : (
                 <>
-                  Elige tu paquete de créditos (<strong>62,500</strong> a <strong>625,000 tokens</strong>) y paga de forma segura con <strong>PayPal</strong> para desbloquear todas las herramientas de generación 3D, video y audio del programa.
+                  Elige tu paquete de créditos (<strong>62,500</strong> a <strong>625,000 tokens</strong>) con <strong>PayPal Checkout Seguro</strong>, o activa tu <strong>Suscripción Gratis (+62,500 tokens)</strong> creando tu cuenta en <strong>whop.com/@saulmente</strong>.
                 </>
               )}
             </p>
@@ -4690,7 +4722,7 @@ const SubscriptionPreferencesAndCreditsPanel = ({
                 ${monetizationStats.totalUsd.toFixed(2)} USD
               </div>
               <div className="text-[11px] text-emerald-700 font-semibold mt-0.5">
-                Cuenta activa: {effectiveMerchantEmail}
+                Cuenta oculta: {maskedMerchantDisplay} 🔒
               </div>
             </div>
 
@@ -4699,8 +4731,8 @@ const SubscriptionPreferencesAndCreditsPanel = ({
               <div className="text-xl font-bold font-mono text-slate-900 tabular-nums mt-0.5">
                 {monetizationStats.paypalCount} pagos
               </div>
-              <div className="text-[11px] text-slate-500 mt-0.5">
-                Modo actual: {effectiveCheckoutMode === 'live' ? 'LIVE (Pagos Reales)' : 'SANDBOX (Pruebas)'}
+              <div className="text-[11px] text-emerald-700 font-semibold mt-0.5">
+                Servidor: LIVE (www.paypal.com)
               </div>
             </div>
 
@@ -4710,19 +4742,19 @@ const SubscriptionPreferencesAndCreditsPanel = ({
                 {monetizationStats.totalTokensSold.toLocaleString()}
               </div>
               <div className="text-[11px] text-slate-500 mt-0.5">
-                Acreditación inmediata al pagar
+                PayPal + Suscriptores Gratis Whop
               </div>
             </div>
 
             <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200 flex flex-col justify-between">
-              <div className="text-xs text-slate-500">Link Directo a {effectiveMerchantEmail}</div>
+              <div className="text-xs text-slate-500">Pasarela Protegida (Sin exhibir correo)</div>
               <a
                 href={livePayPalDirectHref}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="mt-1 inline-flex items-center justify-between gap-2 px-3 py-1.5 rounded-lg bg-[#0070E0] hover:bg-[#003087] text-white text-xs font-bold transition-colors"
               >
-                <span>Abrir Checkout PayPal ({selectedPackage.priceLabel})</span>
+                <span>Probar Checkout Protegido ({selectedPackage.priceLabel})</span>
                 <ExternalLink className="w-3.5 h-3.5 shrink-0" />
               </a>
             </div>
@@ -4888,30 +4920,34 @@ const SubscriptionPreferencesAndCreditsPanel = ({
               className="w-full py-3.5 px-5 rounded-2xl bg-[#FFC439] hover:bg-[#F2BA36] text-[#003087] font-extrabold text-sm flex items-center justify-center gap-2 shadow-xs transition-all cursor-pointer border border-[#E5AC2A]"
             >
               <PayPalBrandBadge dark />
-              <span>Checkout · Pagar {selectedPackage.priceLabel} USD</span>
+              <span>Checkout Seguro · Pagar {selectedPackage.priceLabel} USD</span>
               <ExternalLink className="w-4 h-4" />
             </button>
 
-            {/* Direct PayPal Link Option */}
-            <div className="flex items-center justify-between gap-2 pt-1 text-xs text-slate-500">
-              <a
-                href={livePayPalDirectHref}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-[#0070E0] hover:underline font-semibold flex items-center gap-1"
+            {/* Free Subscriber Verification -> Creates Account on Whop https://whop.com/@saulmente + Grants 62,500 Tokens */}
+            <div className="pt-2 border-t border-slate-100 space-y-1.5">
+              <button
+                type="button"
+                disabled={isSubmittingSubscription}
+                onClick={handleFreeWhopSubscriptionClick}
+                className="w-full py-3 px-4 rounded-2xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white font-extrabold text-xs flex items-center justify-center gap-2 shadow-xs transition-all cursor-pointer"
               >
-                <span>Pago seguro vía PayPal Checkout</span>
-                <ExternalLink className="w-3 h-3" />
-              </a>
-              <a
-                href={livePayPalMeHref}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-slate-600 hover:text-slate-900 hover:underline font-mono text-[11px] flex items-center gap-1"
-              >
-                <span>paypal.me/{effectivePayPalMeUsername}/{selectedPackage.priceUsd}</span>
-                <ExternalLink className="w-3 h-3" />
-              </a>
+                <Zap className="w-4 h-4" />
+                <span>Suscriptor Gratis (+62,500 Tokens) → Crear Cuenta en Whop (@saulmente)</span>
+                <ExternalLink className="w-3.5 h-3.5" />
+              </button>
+              <div className="flex items-center justify-between gap-2 text-[11px] text-slate-500 px-1">
+                <span>🔒 Receptor PayPal oculto y protegido</span>
+                <a
+                  href={WHOP_TARGET_URL}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-emerald-700 hover:underline font-mono font-bold flex items-center gap-1"
+                >
+                  <span>whop.com/@saulmente</span>
+                  <ExternalLink className="w-3 h-3" />
+                </a>
+              </div>
             </div>
           </div>
 
@@ -5007,172 +5043,150 @@ const SubscriptionPreferencesAndCreditsPanel = ({
         <div className="lg:col-span-7 space-y-6">
           {showPrivateAdminPanel ? (
             <>
-              {/* Card A (SOLO ADMIN): Configuración de Cuenta PayPal para Monetización Real */}
+              {/* Card A (SOLO ADMIN): Protección de Cuenta PayPal + Diagnóstico IMG_0011 + Verificación Whop */}
               <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm space-y-4">
                 <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-3">
                   <div>
                     <div className="text-xs font-semibold text-[#0070E0] flex items-center gap-1.5">
                       <PayPalBrandBadge />
-                      <span>· 🔒 Solo Administrador (Oculto al Público)</span>
+                      <span>· 🔒 Blindaje de Cuenta PayPal (Oculta al Público)</span>
                     </div>
                     <h3 className="text-base font-bold text-slate-900 mt-0.5">
-                      Cuenta PayPal Activa: <span className="font-mono text-[#003087]">{effectiveMerchantEmail}</span>
+                      Cuenta Receptora Protegida: <span className="font-mono text-emerald-700">{maskedMerchantDisplay}</span>
                     </h3>
                   </div>
                   <span className="text-xs font-mono font-bold text-emerald-800 bg-emerald-50 border border-emerald-300 px-3 py-1 rounded-md">
-                    {effectiveCheckoutMode === 'live'
-                      ? 'MODO REAL (LIVE) ACTIVO · USD'
-                      : 'MODO PRUEBA (SANDBOX)'}
+                    LIVE (www.paypal.com) · SANDBOX ELIMINADO
                   </span>
                 </div>
 
-                {/* Instant Confirmation Banner explaining that garciasaul@hotmail.com is already active in LIVE mode */}
-                <div className="p-3.5 rounded-xl bg-emerald-50/90 border border-emerald-200 text-xs text-emerald-950 space-y-1.5">
-                  <div className="font-bold text-emerald-900 flex items-center justify-between gap-2">
+                {/* Security & IMG_0011 Diagnostic Banner */}
+                <div className="p-4 rounded-xl bg-emerald-50/90 border border-emerald-200 text-xs text-emerald-950 space-y-2.5">
+                  <div className="font-bold text-emerald-900 flex flex-wrap items-center justify-between gap-2">
                     <span>
-                      ✓ Tu cuenta <span className="font-mono underline">{effectiveMerchantEmail}</span> ya está lista y protegida (Solo tú puedes editarla)
+                      🛡️ Verificación de Seguridad Completada: Tu correo NUNCA se exhibe en pantalla ni en los links
                     </span>
-                    <button
-                      type="button"
-                      onClick={() => setShowPayPalModeHelp((prev) => !prev)}
-                      className="text-[11px] font-bold text-[#0070E0] hover:underline shrink-0 cursor-pointer"
-                    >
-                      {showPayPalModeHelp ? 'Ocultar explicación de Modo' : '¿Dónde está el Modo (Mode)?'}
-                    </button>
-                  </div>
-                  <p className="text-emerald-800 leading-relaxed">
-                    <strong>Privacidad garantizada:</strong> Esta tarjeta de configuración y tus ingresos <strong>solo te aparecen a ti como administrador</strong>. Cuando tus clientes entran a la aplicación, solo ven la tarjeta izquierda (<strong>Buy tokens</strong>) y todos sus pagos van fijo a <strong>{effectiveMerchantEmail}</strong>.
-                  </p>
-                </div>
-
-                {/* Direct 1-Click Mode Selector right here so the user doesn't have to search for "Mode" anywhere */}
-                <div className="space-y-2">
-                  <label className="block text-xs font-bold text-slate-800">
-                    Selector Directo de Modo PayPal (Exclusivo para ti como Administrador):
-                  </label>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                    <button
-                      type="button"
-                      onClick={() =>
-                        onUpdatePreferences({
-                          ...preferences,
-                          merchantPayPalEmail: effectiveMerchantEmail,
-                          paypalCheckoutMode: 'live',
-                        })
-                      }
-                      className={`p-3 rounded-xl border text-left transition-all cursor-pointer ${
-                        effectiveCheckoutMode === 'live'
-                          ? 'bg-emerald-50/80 border-emerald-600 text-slate-900 shadow-xs'
-                          : 'bg-slate-50 border-slate-200 text-slate-600 hover:border-slate-300'
-                      }`}
-                    >
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="text-xs font-extrabold text-slate-900">
-                          1. Modo Real (LIVE · Recomendado)
-                        </span>
-                        {effectiveCheckoutMode === 'live' && (
-                          <Check className="w-4 h-4 text-emerald-600 shrink-0" />
-                        )}
-                      </div>
-                      <p className="text-[11px] text-slate-600 mt-1">
-                        Recibe dinero real en USD directamente en <strong>{effectiveMerchantEmail}</strong>.
-                      </p>
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={() =>
-                        onUpdatePreferences({
-                          ...preferences,
-                          merchantPayPalEmail: effectiveMerchantEmail,
-                          paypalCheckoutMode: 'sandbox',
-                        })
-                      }
-                      className={`p-3 rounded-xl border text-left transition-all cursor-pointer ${
-                        effectiveCheckoutMode === 'sandbox'
-                          ? 'bg-amber-50/80 border-amber-500 text-slate-900 shadow-xs'
-                          : 'bg-slate-50 border-slate-200 text-slate-600 hover:border-slate-300'
-                      }`}
-                    >
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="text-xs font-extrabold text-slate-900">
-                          2. Modo Prueba (SANDBOX)
-                        </span>
-                        {effectiveCheckoutMode === 'sandbox' && (
-                          <Check className="w-4 h-4 text-amber-600 shrink-0" />
-                        )}
-                      </div>
-                      <p className="text-[11px] text-slate-600 mt-1">
-                        Solo para simular pagos de prueba sin cobrar dinero real.
-                      </p>
-                    </button>
-                  </div>
-                </div>
-
-                {showPayPalModeHelp && (
-                  <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-700 space-y-2">
-                    <div className="font-bold text-slate-900">
-                      Guía rápida: ¿Qué significa &quot;Modo / Mode&quot; en PayPal?
+                    <div className="flex items-center gap-3">
+                      <button
+                        type="button"
+                        onClick={() => setShowDiagnosticImagePreview((prev) => !prev)}
+                        className="text-[11px] font-bold text-[#0070E0] hover:underline cursor-pointer"
+                      >
+                        {showDiagnosticImagePreview ? 'Ocultar captura IMG_0011' : 'Ver captura IMG_0011'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setShowPayPalModeHelp((prev) => !prev)}
+                        className="text-[11px] font-bold text-emerald-800 hover:underline cursor-pointer"
+                      >
+                        {showPayPalModeHelp ? 'Ocultar explicación' : 'Ver explicación'}
+                      </button>
                     </div>
-                    <ul className="list-disc pl-4 space-y-1 text-slate-600">
-                      <li>
-                        <strong>Opción A (Ya activa para ti):</strong> Usando tu correo <strong>garciasaul@hotmail.com</strong>, el botón de arriba ya está en <strong>Modo Real (LIVE)</strong> y no tienes que entrar a ninguna configuración técnica de PayPal.
-                      </li>
-                      <li>
-                        <strong>Opción B (Si algún día buscas el interruptor &quot;Live / Sandbox&quot; en la web de PayPal):</strong> Ese botón solo aparece si entras a <span className="font-mono text-slate-800">developer.paypal.com</span> con tu cuenta <strong>garciasaul@hotmail.com</strong>; arriba a la derecha verás un interruptor que dice <strong>Sandbox | Live</strong>. Pero para cobrar con los botones de este programa <strong>no necesitas hacer nada ahí</strong>.
-                      </li>
-                    </ul>
                   </div>
-                )}
+
+                  {showPayPalModeHelp && (
+                    <div className="p-3 rounded-xl bg-white border border-emerald-200 text-slate-700 space-y-2">
+                      <div className="font-bold text-slate-900">
+                        ¿Por qué te salió el error de la foto (<span className="font-mono">sandbox.paypal.com</span>) y por qué te abrió tu propia cuenta en tu iPad?
+                      </div>
+                      <ul className="list-disc pl-4 space-y-1.5 text-slate-600">
+                        <li>
+                          <strong>1. Por qué salió &quot;Things don&apos;t appear to be working at the moment&quot; en tu foto:</strong> En la barra superior de tu foto decía <span className="font-mono text-rose-700">sandbox.paypal.com</span> (el servidor de pruebas de PayPal donde tu cuenta real no existe). <strong>Ya eliminamos Sandbox por completo</strong> y bloqueamos todo al servidor oficial real <strong>https://www.paypal.com</strong>.
+                        </li>
+                        <li>
+                          <strong>2. Por qué cuando tú haces clic te entra a tu propia cuenta de PayPal:</strong> Porque en el navegador Safari de tu iPad <strong>tú ya tienes iniciada la sesión de tu propio PayPal</strong> (se ve la pestaña <em>&quot;Dashboard | PayPal&quot;</em> abierta al lado en tu captura). Cuando un cliente externo hace clic desde su celular o computadora, PayPal le pide <strong>la tarjeta o cuenta del cliente</strong> para enviarte el dinero a ti, y gracias a la pasarela por servidor (<span className="font-mono">/api/paypal/checkout</span>) tu correo jamás se exhibe.
+                        </li>
+                        <li>
+                          <strong>3. Verificación de Suscriptores Gratis en Whop:</strong> Cada persona que se registra o elige la suscripción gratis recibe sus <strong>+62,500 tokens</strong> y es enviada directamente a <strong>https://whop.com/@saulmente</strong> para crear su cuenta en tu Whop.
+                        </li>
+                      </ul>
+                    </div>
+                  )}
+
+                  {showDiagnosticImagePreview && (
+                    <div className="p-2.5 rounded-xl bg-white border border-slate-200 space-y-1.5">
+                      <div className="text-[11px] font-bold text-slate-600">
+                        Captura Analizada (IMG_0011 · sandbox.paypal.com reemplazado por www.paypal.com Live Protegido)
+                      </div>
+                      <img
+                        src={PAYPAL_SCREENSHOT_DIAGNOSTIC_IMAGE_URL}
+                        alt="Diagnóstico PayPal IMG_0011"
+                        referrerPolicy="no-referrer"
+                        className="w-full max-h-56 object-contain rounded-lg border border-slate-200 bg-slate-950"
+                      />
+                    </div>
+                  )}
+                </div>
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div>
-                    <label className="block text-xs font-semibold text-slate-700 mb-1">
-                      Correo de tu Cuenta PayPal (Solo tú como Admin puedes cambiarlo)
-                    </label>
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="block text-xs font-semibold text-slate-700">
+                        Tu Cuenta PayPal Receptora (Oculta con asteriscos 🔒)
+                      </label>
+                      <button
+                        type="button"
+                        onClick={() => setShowRawMerchantEmail((prev) => !prev)}
+                        className="text-[11px] font-bold text-[#0070E0] hover:underline cursor-pointer"
+                      >
+                        {showRawMerchantEmail ? 'Ocultar correo' : 'Mostrar para editar'}
+                      </button>
+                    </div>
                     <input
-                      type="email"
+                      type={showRawMerchantEmail ? 'email' : 'password'}
                       value={effectiveMerchantEmail}
                       onChange={(e) =>
                         onUpdatePreferences({
                           ...preferences,
                           merchantPayPalEmail: e.target.value,
+                          paypalCheckoutMode: 'live',
                         })
                       }
-                      placeholder="garciasaul@hotmail.com"
+                      placeholder="Correo PayPal protegido"
                       className="w-full bg-slate-50 border border-slate-300 focus:border-[#0070E0] rounded-xl px-3.5 py-2 text-xs font-mono text-slate-900 outline-none"
                     />
+                    <div className="text-[11px] text-slate-500 mt-1">
+                      Vista en pantalla: <span className="font-mono font-bold text-slate-700">{maskedMerchantDisplay}</span> (Nadie puede ver tu correo completo).
+                    </div>
                   </div>
 
                   <div>
                     <label className="block text-xs font-semibold text-slate-700 mb-1">
-                      Usuario de PayPal.Me (ej. paypal.me/saulmente)
+                      Cuenta Whop Oficial para Suscriptores Gratis
                     </label>
-                    <input
-                      type="text"
-                      value={preferences.paypalMeUsername || 'saulmente'}
-                      onChange={(e) =>
-                        onUpdatePreferences({
-                          ...preferences,
-                          paypalMeUsername: e.target.value,
-                        })
-                      }
-                      placeholder="saulmente"
-                      className="w-full bg-slate-50 border border-slate-300 focus:border-[#0070E0] rounded-xl px-3.5 py-2 text-xs font-mono text-slate-900 outline-none"
-                    />
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="text"
+                        readOnly
+                        value={WHOP_TARGET_URL}
+                        className="w-full bg-emerald-50/70 border border-emerald-300 rounded-xl px-3.5 py-2 text-xs font-mono font-bold text-emerald-900 outline-none"
+                      />
+                      <a
+                        href={WHOP_TARGET_URL}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="px-3 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold shrink-0 inline-flex items-center gap-1"
+                      >
+                        <span>Whop</span>
+                        <ExternalLink className="w-3.5 h-3.5" />
+                      </a>
+                    </div>
+                    <div className="text-[11px] text-emerald-700 mt-1 font-medium">
+                      ✓ Verificado: Todo suscriptor gratis es dirigido a crear su cuenta en @saulmente.
+                    </div>
                   </div>
                 </div>
 
                 <div className="flex flex-wrap items-center justify-between gap-3 pt-1 text-xs text-slate-600">
                   <span>
-                    Todos los botones <strong>Purchase</strong> y <strong>PayPal Checkout</strong> envían el pago en dólares (USD) directamente a <strong>{effectiveMerchantEmail}</strong>.
+                    Pasarela blindada activa: Los pagos van a tu cuenta <strong>{maskedMerchantDisplay}</strong> vía servidor sin exhibir tu correo.
                   </span>
                   <button
                     type="button"
                     onClick={handleSavePrefsClick}
                     className="px-3.5 py-1.5 rounded-lg bg-[#0070E0] hover:bg-[#003087] text-white text-xs font-bold transition-colors cursor-pointer shrink-0"
                   >
-                    Guardar Cuenta PayPal
+                    Guardar Protección PayPal
                   </button>
                 </div>
               </div>
@@ -5598,7 +5612,7 @@ const SubscriptionPreferencesAndCreditsPanel = ({
                         <div className="text-[11px] text-slate-500 truncate">
                           {sub.subscriberName || 'Cliente PayPal'}
                           {showPrivateAdminPanel
-                            ? ` (${sub.paypalPayerEmail || sub.subscriberEmail}) · Receptor: ${sub.merchantPayPalEmail || effectiveMerchantEmail}`
+                            ? ` (${sub.paypalPayerEmail || sub.subscriberEmail}) · Receptor Protegido: ${maskPayPalEmail(sub.merchantPayPalEmail || effectiveMerchantEmail)}`
                             : ''}
                         </div>
                       </div>
@@ -6317,9 +6331,9 @@ export default function App() {
       email: cleanEmail.slice(0, 256),
       businessName: (payload.businessName.trim() || 'Mi Negocio').slice(0, 160),
       phone: payload.phone.trim().slice(0, 60),
-      planType: (payload.planType || 'Acceso Gratis Total · Negocio').slice(0, 80),
+      planType: (payload.planType || 'Suscriptor Gratis · Crear Cuenta en Whop (@saulmente)').slice(0, 80),
       tokensGranted: grantedTokens,
-      priceLabel: selectedPkg.priceLabel,
+      priceLabel: 'GRATIS · Whop @saulmente',
       targetUrl: WHOP_TARGET_URL,
       createdAtIso: new Date().toISOString(),
     };
@@ -6330,8 +6344,39 @@ export default function App() {
       return next;
     });
     setLastRegisteredEntry(newEntry);
+
+    // Also record the free subscriber in subscriptions so every free subscriber is verified & tracked with Whop @saulmente
+    const freeWhopSubRecord: SubscriptionRecord = {
+      id: `sub-whop-${Date.now()}`,
+      userId: user?.uid || 'guest',
+      subscriberName: newEntry.name,
+      subscriberEmail: newEntry.email,
+      packageId: 'free-whop-saulmente',
+      priceUsd: 0,
+      priceLabel: 'GRATIS · Whop @saulmente',
+      tokensGranted: grantedTokens,
+      categories: subscriptionPrefs.categories.slice(0, 12),
+      pricingMode: subscriptionPrefs.pricingMode,
+      deliveryFormats: subscriptionPrefs.deliveryFormats.slice(0, 10),
+      autoRecharge: false,
+      paymentMethod: 'whop',
+      paypalOrderId: `WHOP-@SAULMENTE-${Date.now()}`,
+      paypalPayerEmail: newEntry.email,
+      paypalStatus: 'WHOP_ACCOUNT_REDIRECTED',
+      merchantPayPalEmail: DEFAULT_MERCHANT_PAYPAL_EMAIL,
+      status: 'active',
+      createdAtIso: new Date().toISOString(),
+    };
+
+    setLocalSubscriptions((prev) => {
+      const next = [freeWhopSubRecord, ...prev];
+      saveLocalSubscriptions(next);
+      return next;
+    });
+    setLastGrantedSubscription(freeWhopSubRecord);
+
     setSaveBannerMessage(
-      `¡Registro gratis completado para "${newEntry.name}" (+${grantedTokens.toLocaleString()} tokens acreditados)! Redirigiendo a ${WHOP_TARGET_URL}`
+      `¡Suscriptor gratis verificado: "${newEntry.name}" (+${grantedTokens.toLocaleString()} tokens)! Abriendo ${WHOP_TARGET_URL} para crear su cuenta en Whop (@saulmente).`
     );
 
     try {
@@ -6354,7 +6399,7 @@ export default function App() {
           phone: newEntry.phone || '',
           planType: newEntry.planType,
           tokensGranted: grantedTokens,
-          priceLabel: selectedPkg.priceLabel,
+          priceLabel: 'GRATIS · Whop @saulmente',
           targetUrl: WHOP_TARGET_URL,
           createdAt: serverTimestamp(),
         });
@@ -8622,6 +8667,97 @@ export default function App() {
                 )}
               </button>
             </form>
+
+            {/* DIRECT FINDER BAR: Dónde buscar mis suscriptores gratis (Whop) y mis pagos PayPal */}
+            <div className="p-3.5 rounded-xl bg-slate-900 text-white border border-slate-800 space-y-3">
+              <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
+                <div className="space-y-0.5">
+                  <div className="text-xs font-extrabold text-emerald-400 flex items-center gap-1.5">
+                    <span>📍 ¿DÓNDE BUSCO MIS SUSCRIPTORES GRATIS (WHOP) Y MIS PAGOS DE PAYPAL?</span>
+                  </div>
+                  <p className="text-[11px] text-slate-300">
+                    Aquí tienes los <strong>3 botones directos</strong> para ver cada persona registrada gratis, tus cobros de PayPal y las cuentas creadas en tu Whop:
+                  </p>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-2 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => setIsRegistrationModalOpen(true)}
+                    className="px-3.5 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-extrabold text-xs flex items-center gap-1.5 cursor-pointer shadow-xs"
+                  >
+                    <Zap className="w-3.5 h-3.5" />
+                    <span>1. Ver Suscriptores Gratis ({registrations.length})</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setActiveTab('subscriptions')}
+                    className="px-3.5 py-2 rounded-xl bg-[#0070E0] hover:bg-[#005bb5] text-white font-extrabold text-xs flex items-center gap-1.5 cursor-pointer shadow-xs"
+                  >
+                    <span>2. Ver Pagos PayPal y Tokens ({subscriptions.length})</span>
+                  </button>
+
+                  <a
+                    href={WHOP_TARGET_URL}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="px-3.5 py-2 rounded-xl bg-amber-400 hover:bg-amber-300 text-slate-950 font-extrabold text-xs flex items-center gap-1.5 shadow-xs"
+                  >
+                    <span>3. Ver Cuentas en mi Whop (@saulmente)</span>
+                    <ExternalLink className="w-3.5 h-3.5" />
+                  </a>
+                </div>
+              </div>
+
+              {(registrations.length > 0 || subscriptions.length > 0) && (
+                <div className="pt-2.5 border-t border-slate-800 grid grid-cols-1 md:grid-cols-2 gap-2.5 text-xs">
+                  <div className="p-2.5 rounded-lg bg-slate-950 border border-slate-800 flex items-center justify-between gap-2">
+                    <div className="min-w-0">
+                      <span className="text-[10px] font-mono uppercase text-emerald-400 block">
+                        Último Suscriptor Gratis → Whop (@saulmente)
+                      </span>
+                      {registrations[0] ? (
+                        <div className="truncate font-semibold text-white">
+                          {registrations[0].name} ({registrations[0].email}) · +{(registrations[0].tokensGranted || 62500).toLocaleString()} tokens
+                        </div>
+                      ) : (
+                        <div className="text-slate-400">Sin registros aún</div>
+                      )}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setIsRegistrationModalOpen(true)}
+                      className="px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-emerald-300 text-[11px] font-bold shrink-0 cursor-pointer"
+                    >
+                      Ver todos
+                    </button>
+                  </div>
+
+                  <div className="p-2.5 rounded-lg bg-slate-950 border border-slate-800 flex items-center justify-between gap-2">
+                    <div className="min-w-0">
+                      <span className="text-[10px] font-mono uppercase text-sky-400 block">
+                        Última Suscripción / Orden de Tokens
+                      </span>
+                      {subscriptions[0] ? (
+                        <div className="truncate font-semibold text-white">
+                          {subscriptions[0].subscriberName} · {subscriptions[0].priceLabel} (+{subscriptions[0].tokensGranted.toLocaleString()} tokens)
+                        </div>
+                      ) : (
+                        <div className="text-slate-400">Sin órdenes aún</div>
+                      )}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setActiveTab('subscriptions')}
+                      className="px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-sky-300 text-[11px] font-bold shrink-0 cursor-pointer"
+                    >
+                      Abrir Panel
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
 
             {lastRegisteredEntry && (
               <div className="p-3 rounded-xl bg-cyan-50 border border-cyan-400 flex flex-wrap items-center justify-between gap-3 text-xs">

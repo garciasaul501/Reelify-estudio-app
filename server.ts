@@ -1127,37 +1127,30 @@ Devuelve un JSON en español con:
     return { token: data.access_token, baseUrl };
   }
 
-  function buildPayPalDirectCheckoutUrl(params: {
-    merchantEmail: string;
-    itemName: string;
+  function maskEmailForDisplay(email: string): string {
+    const clean = (email || '').trim();
+    const atIndex = clean.indexOf('@');
+    if (atIndex <= 2) return ' Cuenta PayPal Protegida 🔒';
+    const userPart = clean.slice(0, atIndex);
+    const domainPart = clean.slice(atIndex);
+    return `${userPart.slice(0, 3)}***${userPart.slice(-1)}${domainPart}`;
+  }
+
+  function buildProtectedInternalCheckoutPath(params: {
+    packageId: string;
     amountUsd: number;
+    tokensGranted: number;
     customOrderId: string;
-    returnUrl?: string;
-    mode?: 'live' | 'sandbox';
+    checkoutStyle?: 'card_guest' | 'paypal_login';
   }): string {
-    const cleanBusiness =
-      params.merchantEmail.trim() && params.merchantEmail.trim() !== 'garciasaul501@gmail.com'
-        ? params.merchantEmail.trim()
-        : DEFAULT_PAYPAL_MERCHANT_EMAIL;
-    const amountFixed = Math.max(1, Number(params.amountUsd) || 5).toFixed(2);
-    const webscrHost =
-      params.mode === 'sandbox'
-        ? 'https://www.sandbox.paypal.com/cgi-bin/webscr'
-        : 'https://www.paypal.com/cgi-bin/webscr';
-    const url = new URL(webscrHost);
-    url.searchParams.set('cmd', '_xclick');
-    url.searchParams.set('business', cleanBusiness);
-    url.searchParams.set('item_name', params.itemName);
-    url.searchParams.set('item_number', params.customOrderId);
-    url.searchParams.set('amount', amountFixed);
-    url.searchParams.set('currency_code', 'USD');
-    url.searchParams.set('no_shipping', '1');
-    url.searchParams.set('no_note', '0');
-    if (params.returnUrl) {
-      url.searchParams.set('return', params.returnUrl);
-      url.searchParams.set('cancel_return', params.returnUrl);
-    }
-    return url.toString();
+    const qs = new URLSearchParams({
+      pkg: params.packageId,
+      amount: Math.max(1, Number(params.amountUsd) || 5).toFixed(2),
+      tokens: String(Math.max(1, Number(params.tokensGranted) || 62500)),
+      orderId: params.customOrderId,
+      style: params.checkoutStyle || 'card_guest',
+    });
+    return `/api/paypal/checkout?${qs.toString()}`;
   }
 
   const ADMIN_OWNER_EMAILS = new Set([
@@ -1165,17 +1158,121 @@ Devuelve un JSON en español con:
     'garciasaul@hotmail.com',
   ]);
 
+  // Server-side protected checkout bridge: submits a POST form to https://www.paypal.com/cgi-bin/webscr
+  // without exposing the merchant's email in the browser URL bar or frontend links, and NEVER uses sandbox.paypal.com.
+  app.get('/api/paypal/checkout', (req, res) => {
+    const pkg = typeof req.query.pkg === 'string' ? req.query.pkg.slice(0, 40) : 'tier-5';
+    const amountRaw = Number(req.query.amount);
+    const amountFixed = (Number.isFinite(amountRaw) && amountRaw > 0 ? amountRaw : 5.0).toFixed(2);
+    const tokensRaw = Number(req.query.tokens);
+    const tokensGranted = Number.isFinite(tokensRaw) && tokensRaw > 0 ? tokensRaw : 62500;
+    const orderId =
+      typeof req.query.orderId === 'string' && req.query.orderId.trim()
+        ? req.query.orderId.trim().slice(0, 80)
+        : `PP-${Date.now()}`;
+    const itemName = `Paquete +${tokensGranted.toLocaleString()} Tokens Estudio 3D IA (${pkg})`;
+    const appReturnUrl = process.env.APP_URL?.trim() || '';
+
+    const html = `<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="referrer" content="no-referrer" />
+  <title>Conectando con PayPal Checkout Seguro...</title>
+  <style>
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: #f8fafc;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      color: #0f172a;
+    }
+    .card {
+      background: #ffffff;
+      border: 1px solid #e2e8f0;
+      border-radius: 20px;
+      padding: 28px 32px;
+      max-width: 420px;
+      width: 90%;
+      text-align: center;
+      box-shadow: 0 10px 25px -5px rgba(15, 23, 42, 0.08);
+    }
+    .spinner {
+      width: 36px;
+      height: 36px;
+      border: 3px solid #e2e8f0;
+      border-top-color: #0070e0;
+      border-radius: 50%;
+      margin: 0 auto 16px;
+      animation: spin 0.8s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .btn {
+      margin-top: 16px;
+      background: #0070e0;
+      color: #fff;
+      border: none;
+      border-radius: 12px;
+      padding: 12px 20px;
+      font-weight: 700;
+      font-size: 14px;
+      cursor: pointer;
+      width: 100%;
+    }
+    .sub {
+      font-size: 12px;
+      color: #64748b;
+      margin-top: 8px;
+    }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="spinner"></div>
+    <h2 style="margin:0 0 6px;font-size:18px;">Abriendo Pasarela Oficial PayPal ($${amountFixed} USD)</h2>
+    <p class="sub">Conexión cifrada · +${tokensGranted.toLocaleString()} tokens · Orden ${orderId.replace(/[<>"']/g, '')}</p>
+    <form id="ppForm" action="https://www.paypal.com/cgi-bin/webscr" method="post" target="_top">
+      <input type="hidden" name="cmd" value="_xclick" />
+      <input type="hidden" name="business" value="${DEFAULT_PAYPAL_MERCHANT_EMAIL.replace(/[<>"']/g, '')}" />
+      <input type="hidden" name="item_name" value="${itemName.replace(/[<>"']/g, '')}" />
+      <input type="hidden" name="item_number" value="${orderId.replace(/[<>"']/g, '')}" />
+      <input type="hidden" name="amount" value="${amountFixed}" />
+      <input type="hidden" name="currency_code" value="USD" />
+      <input type="hidden" name="no_shipping" value="1" />
+      <input type="hidden" name="no_note" value="1" />
+      <input type="hidden" name="landing_page" value="Billing" />
+      <input type="hidden" name="solution_type" value="Sole" />
+      <input type="hidden" name="bn" value="PP-BuyNowBF:btn_buynowCC_LG.gif:NonHostedGuest" />
+      ${appReturnUrl ? `<input type="hidden" name="return" value="${appReturnUrl.replace(/[<>"']/g, '')}" />` : ''}
+      ${appReturnUrl ? `<input type="hidden" name="cancel_return" value="${appReturnUrl.replace(/[<>"']/g, '')}" />` : ''}
+      <button type="submit" class="btn">Continuar a PayPal ($${amountFixed} USD)</button>
+    </form>
+  </div>
+  <script>
+    setTimeout(function() {
+      var f = document.getElementById('ppForm');
+      if (f) f.submit();
+    }, 120);
+  </script>
+</body>
+</html>`;
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.send(html);
+  });
+
   app.get('/api/paypal/config', (_req, res) => {
     const clientId = process.env.PAYPAL_CLIENT_ID?.trim() || '';
     const hasSecret = Boolean(process.env.PAYPAL_CLIENT_SECRET?.trim());
-    const mode =
-      process.env.PAYPAL_MODE?.trim().toLowerCase() === 'sandbox' ? 'sandbox' : 'live';
     res.json({
       success: true,
       clientId,
-      mode,
+      mode: 'live',
       hasRestCredentials: Boolean(clientId && hasSecret),
-      merchantEmail: DEFAULT_PAYPAL_MERCHANT_EMAIL,
+      maskedMerchantEmail: maskEmailForDisplay(DEFAULT_PAYPAL_MERCHANT_EMAIL),
       currency: 'USD',
     });
   });
@@ -1190,32 +1287,19 @@ Devuelve un JSON en español con:
         typeof body.tokensGranted === 'number' && body.tokensGranted > 0
           ? body.tokensGranted
           : 62500;
-      const callerAdminEmail =
-        typeof body.adminEmail === 'string' ? body.adminEmail.trim().toLowerCase() : '';
-      const isAuthorizedAdmin = ADMIN_OWNER_EMAILS.has(callerAdminEmail);
-      const rawMerchantEmail =
-        typeof body.merchantPayPalEmail === 'string' ? body.merchantPayPalEmail.trim() : '';
-      // Public customers can NEVER change the destination PayPal account; only the admin can.
-      const merchantEmail =
-        isAuthorizedAdmin && rawMerchantEmail && rawMerchantEmail !== 'garciasaul501@gmail.com'
-          ? rawMerchantEmail.slice(0, 256)
-          : DEFAULT_PAYPAL_MERCHANT_EMAIL;
-      const checkoutMode: 'live' | 'sandbox' =
-        isAuthorizedAdmin && body.mode === 'sandbox' ? 'sandbox' : 'live';
+      const merchantEmail = DEFAULT_PAYPAL_MERCHANT_EMAIL;
       const itemName = `Suscripción Estudio IA 3D · +${tokensGranted.toLocaleString()} Tokens (${packageId})`;
       const customOrderId = `PP-${Date.now()}-${Math.random().toString(36).slice(2, 7).toUpperCase()}`;
-      const appReturnUrl = process.env.APP_URL?.trim() || undefined;
 
-      const directCheckoutUrl = buildPayPalDirectCheckoutUrl({
-        merchantEmail,
-        itemName,
+      // Protected server-side checkout path (never exposes the merchant's email in the URL or frontend)
+      const directCheckoutUrl = buildProtectedInternalCheckoutPath({
+        packageId,
         amountUsd: priceUsd,
+        tokensGranted,
         customOrderId,
-        returnUrl: appReturnUrl,
-        mode: checkoutMode,
       });
 
-      const authInfo = await getPayPalAccessToken(checkoutMode).catch(() => null);
+      const authInfo = await getPayPalAccessToken('live').catch(() => null);
       if (authInfo) {
         const orderPayload: any = {
           intent: 'CAPTURE',
@@ -1255,14 +1339,19 @@ Devuelve un JSON en español con:
           const approveLink = Array.isArray(orderData.links)
             ? orderData.links.find((l: any) => l.rel === 'approve')?.href
             : undefined;
+          // Ensure we never redirect to sandbox.paypal.com if real live payment is expected
+          const safeApproveUrl =
+            approveLink && !approveLink.includes('sandbox.paypal.com')
+              ? approveLink
+              : directCheckoutUrl;
           return res.json({
             success: true,
             mode: 'paypal_rest_v2',
             orderId: orderData.id,
             status: orderData.status || 'CREATED',
-            approveUrl: approveLink || directCheckoutUrl,
+            approveUrl: safeApproveUrl,
             directCheckoutUrl,
-            merchantEmail,
+            maskedMerchantEmail: maskEmailForDisplay(merchantEmail),
             priceUsd,
             tokensGranted,
           });
@@ -1276,7 +1365,7 @@ Devuelve un JSON en español con:
         status: 'READY_FOR_PAYMENT',
         approveUrl: directCheckoutUrl,
         directCheckoutUrl,
-        merchantEmail,
+        maskedMerchantEmail: maskEmailForDisplay(merchantEmail),
         priceUsd,
         tokensGranted,
       });
