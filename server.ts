@@ -1068,6 +1068,9 @@ Devuelve un JSON en español con:
     createdAtIso: string;
   }> = [];
 
+  const DEFAULT_PAYPAL_MERCHANT_EMAIL =
+    process.env.PAYPAL_MERCHANT_EMAIL?.trim() || 'garciasaul@hotmail.com';
+
   const serverSubscriptions: Array<{
     id: string;
     userId: string;
@@ -1079,15 +1082,328 @@ Devuelve un JSON en español con:
     tokensGranted: number;
     status: 'active' | 'paused';
     billingCycle: 'monthly' | 'annual' | 'one_time';
-    pricingMode: 'single_all' | 'per_category';
+    pricingMode: 'single' | 'single_all' | 'per_category';
     categories: string[];
     deliveryFormats: string[];
     autoGrantCreditsOnSubscribe: boolean;
     autoTopUpLowBalance: boolean;
+    autoRecharge?: boolean;
     redirectToWhop: boolean;
     targetUrl: string;
+    paymentMethod?: string;
+    paypalOrderId?: string;
+    paypalPayerEmail?: string;
+    paypalStatus?: string;
+    merchantPayPalEmail?: string;
     createdAtIso: string;
   }> = [];
+
+  async function getPayPalAccessToken(requestedMode?: string): Promise<{ token: string; baseUrl: string } | null> {
+    const clientId = process.env.PAYPAL_CLIENT_ID?.trim();
+    const clientSecret = process.env.PAYPAL_CLIENT_SECRET?.trim();
+    if (!clientId || !clientSecret) return null;
+
+    const envMode = requestedMode || process.env.PAYPAL_MODE?.trim().toLowerCase() || 'live';
+    const isSandbox = envMode === 'sandbox';
+    const baseUrl = isSandbox
+      ? 'https://api-m.sandbox.paypal.com'
+      : 'https://api-m.paypal.com';
+
+    const authHeader = Buffer.from(`${clientId}:${clientSecret}`).toString('base64');
+    const resp = await fetch(`${baseUrl}/v1/oauth2/token`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Basic ${authHeader}`,
+        'Content-Type': 'application/x-www-form-urlencoded',
+      },
+      body: 'grant_type=client_credentials',
+    });
+
+    if (!resp.ok) {
+      const errText = await resp.text();
+      throw new Error(`PayPal OAuth error (${resp.status}): ${errText}`);
+    }
+    const data: any = await resp.json();
+    return { token: data.access_token, baseUrl };
+  }
+
+  function buildPayPalDirectCheckoutUrl(params: {
+    merchantEmail: string;
+    itemName: string;
+    amountUsd: number;
+    customOrderId: string;
+    returnUrl?: string;
+    mode?: 'live' | 'sandbox';
+  }): string {
+    const cleanBusiness =
+      params.merchantEmail.trim() && params.merchantEmail.trim() !== 'garciasaul501@gmail.com'
+        ? params.merchantEmail.trim()
+        : DEFAULT_PAYPAL_MERCHANT_EMAIL;
+    const amountFixed = Math.max(1, Number(params.amountUsd) || 5).toFixed(2);
+    const webscrHost =
+      params.mode === 'sandbox'
+        ? 'https://www.sandbox.paypal.com/cgi-bin/webscr'
+        : 'https://www.paypal.com/cgi-bin/webscr';
+    const url = new URL(webscrHost);
+    url.searchParams.set('cmd', '_xclick');
+    url.searchParams.set('business', cleanBusiness);
+    url.searchParams.set('item_name', params.itemName);
+    url.searchParams.set('item_number', params.customOrderId);
+    url.searchParams.set('amount', amountFixed);
+    url.searchParams.set('currency_code', 'USD');
+    url.searchParams.set('no_shipping', '1');
+    url.searchParams.set('no_note', '0');
+    if (params.returnUrl) {
+      url.searchParams.set('return', params.returnUrl);
+      url.searchParams.set('cancel_return', params.returnUrl);
+    }
+    return url.toString();
+  }
+
+  const ADMIN_OWNER_EMAILS = new Set([
+    'garciasaul501@gmail.com',
+    'garciasaul@hotmail.com',
+  ]);
+
+  app.get('/api/paypal/config', (_req, res) => {
+    const clientId = process.env.PAYPAL_CLIENT_ID?.trim() || '';
+    const hasSecret = Boolean(process.env.PAYPAL_CLIENT_SECRET?.trim());
+    const mode =
+      process.env.PAYPAL_MODE?.trim().toLowerCase() === 'sandbox' ? 'sandbox' : 'live';
+    res.json({
+      success: true,
+      clientId,
+      mode,
+      hasRestCredentials: Boolean(clientId && hasSecret),
+      merchantEmail: DEFAULT_PAYPAL_MERCHANT_EMAIL,
+      currency: 'USD',
+    });
+  });
+
+  app.post('/api/paypal/create-order', async (req, res) => {
+    try {
+      const body = req.body || {};
+      const packageId = typeof body.packageId === 'string' ? body.packageId : 'tier-5';
+      const priceUsd =
+        typeof body.priceUsd === 'number' && body.priceUsd > 0 ? body.priceUsd : 5.0;
+      const tokensGranted =
+        typeof body.tokensGranted === 'number' && body.tokensGranted > 0
+          ? body.tokensGranted
+          : 62500;
+      const callerAdminEmail =
+        typeof body.adminEmail === 'string' ? body.adminEmail.trim().toLowerCase() : '';
+      const isAuthorizedAdmin = ADMIN_OWNER_EMAILS.has(callerAdminEmail);
+      const rawMerchantEmail =
+        typeof body.merchantPayPalEmail === 'string' ? body.merchantPayPalEmail.trim() : '';
+      // Public customers can NEVER change the destination PayPal account; only the admin can.
+      const merchantEmail =
+        isAuthorizedAdmin && rawMerchantEmail && rawMerchantEmail !== 'garciasaul501@gmail.com'
+          ? rawMerchantEmail.slice(0, 256)
+          : DEFAULT_PAYPAL_MERCHANT_EMAIL;
+      const checkoutMode: 'live' | 'sandbox' =
+        isAuthorizedAdmin && body.mode === 'sandbox' ? 'sandbox' : 'live';
+      const itemName = `Suscripción Estudio IA 3D · +${tokensGranted.toLocaleString()} Tokens (${packageId})`;
+      const customOrderId = `PP-${Date.now()}-${Math.random().toString(36).slice(2, 7).toUpperCase()}`;
+      const appReturnUrl = process.env.APP_URL?.trim() || undefined;
+
+      const directCheckoutUrl = buildPayPalDirectCheckoutUrl({
+        merchantEmail,
+        itemName,
+        amountUsd: priceUsd,
+        customOrderId,
+        returnUrl: appReturnUrl,
+        mode: checkoutMode,
+      });
+
+      const authInfo = await getPayPalAccessToken(checkoutMode).catch(() => null);
+      if (authInfo) {
+        const orderPayload: any = {
+          intent: 'CAPTURE',
+          purchase_units: [
+            {
+              reference_id: packageId,
+              custom_id: customOrderId,
+              description: itemName.slice(0, 127),
+              amount: {
+                currency_code: 'USD',
+                value: priceUsd.toFixed(2),
+              },
+              payee: {
+                email_address: merchantEmail,
+              },
+            },
+          ],
+          application_context: {
+            brand_name: 'MFI MAX GLOBAL IA · Estudio 3D',
+            landing_page: 'BILLING',
+            user_action: 'PAY_NOW',
+            shipping_preference: 'NO_SHIPPING',
+          },
+        };
+
+        const ppRes = await fetch(`${authInfo.baseUrl}/v2/checkout/orders`, {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${authInfo.token}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(orderPayload),
+        });
+
+        if (ppRes.ok) {
+          const orderData: any = await ppRes.json();
+          const approveLink = Array.isArray(orderData.links)
+            ? orderData.links.find((l: any) => l.rel === 'approve')?.href
+            : undefined;
+          return res.json({
+            success: true,
+            mode: 'paypal_rest_v2',
+            orderId: orderData.id,
+            status: orderData.status || 'CREATED',
+            approveUrl: approveLink || directCheckoutUrl,
+            directCheckoutUrl,
+            merchantEmail,
+            priceUsd,
+            tokensGranted,
+          });
+        }
+      }
+
+      return res.json({
+        success: true,
+        mode: 'paypal_live_checkout',
+        orderId: customOrderId,
+        status: 'READY_FOR_PAYMENT',
+        approveUrl: directCheckoutUrl,
+        directCheckoutUrl,
+        merchantEmail,
+        priceUsd,
+        tokensGranted,
+      });
+    } catch (err: any) {
+      return res.status(500).json({
+        error: err.message || 'No se pudo iniciar la orden de PayPal.',
+      });
+    }
+  });
+
+  app.post('/api/paypal/capture-order', async (req, res) => {
+    try {
+      const body = req.body || {};
+      const orderId =
+        typeof body.orderId === 'string' && body.orderId.trim()
+          ? body.orderId.trim().slice(0, 120)
+          : `PP-${Date.now()}`;
+      const packageId = typeof body.packageId === 'string' ? body.packageId.slice(0, 60) : 'tier-5';
+      const priceUsd =
+        typeof body.priceUsd === 'number' && body.priceUsd > 0 ? body.priceUsd : 5.0;
+      const tokensGranted =
+        typeof body.tokensGranted === 'number' && body.tokensGranted > 0
+          ? body.tokensGranted
+          : 62500;
+      const merchantEmail =
+        typeof body.merchantPayPalEmail === 'string' && body.merchantPayPalEmail.trim()
+          ? body.merchantPayPalEmail.trim().slice(0, 256)
+          : DEFAULT_PAYPAL_MERCHANT_EMAIL;
+
+      let finalStatus = 'COMPLETED';
+      let payerEmail =
+        typeof body.subscriberEmail === 'string' && body.subscriberEmail.trim()
+          ? body.subscriberEmail.trim().slice(0, 256)
+          : 'comprador@paypal.com';
+      let payerName =
+        typeof body.subscriberName === 'string' && body.subscriberName.trim()
+          ? body.subscriberName.trim().slice(0, 120)
+          : 'Cliente PayPal';
+      let finalOrderId = orderId;
+
+      const authInfo = await getPayPalAccessToken().catch(() => null);
+      if (authInfo && !orderId.startsWith('PP-')) {
+        const capRes = await fetch(
+          `${authInfo.baseUrl}/v2/checkout/orders/${encodeURIComponent(orderId)}/capture`,
+          {
+            method: 'POST',
+            headers: {
+              Authorization: `Bearer ${authInfo.token}`,
+              'Content-Type': 'application/json',
+            },
+          }
+        );
+        if (capRes.ok) {
+          const capData: any = await capRes.json();
+          finalStatus = capData.status || 'COMPLETED';
+          finalOrderId = capData.id || orderId;
+          if (capData.payer?.email_address) {
+            payerEmail = String(capData.payer.email_address).slice(0, 256);
+          }
+          if (capData.payer?.name?.given_name) {
+            payerName = `${capData.payer.name.given_name} ${capData.payer.name.surname || ''}`.trim().slice(0, 120);
+          }
+        }
+      }
+
+      const entry = {
+        id: `sub-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+        userId: typeof body.userId === 'string' ? body.userId.slice(0, 128) : 'guest',
+        subscriberName: payerName,
+        subscriberEmail: payerEmail,
+        packageId,
+        priceUsd,
+        priceLabel:
+          typeof body.priceLabel === 'string' && body.priceLabel.trim()
+            ? body.priceLabel.trim().slice(0, 40)
+            : `$${priceUsd.toFixed(2)}`,
+        tokensGranted,
+        status: 'active' as const,
+        billingCycle: (
+          body.billingCycle === 'annual' || body.billingCycle === 'one_time'
+            ? body.billingCycle
+            : 'monthly'
+        ) as 'monthly' | 'annual' | 'one_time',
+        pricingMode: (
+          body.pricingMode === 'per_category'
+            ? 'per_category'
+            : body.pricingMode === 'single'
+            ? 'single'
+            : 'single_all'
+        ) as 'single' | 'single_all' | 'per_category',
+        categories: Array.isArray(body.categories)
+          ? body.categories.map((c: any) => String(c).slice(0, 60)).slice(0, 12)
+          : ['Presentaciones', 'Redes Sociales', 'Landing Pages', 'Mockups 3D', 'Logos Animados'],
+        deliveryFormats: Array.isArray(body.deliveryFormats)
+          ? body.deliveryFormats.map((f: any) => String(f).slice(0, 40)).slice(0, 12)
+          : ['Canva', 'Figma', 'Estudio 3D', 'Video MP4', 'Audio MP3'],
+        autoGrantCreditsOnSubscribe: true,
+        autoTopUpLowBalance: Boolean(body.autoTopUpLowBalance),
+        autoRecharge: Boolean(body.autoRecharge),
+        redirectToWhop: Boolean(body.redirectToWhop),
+        targetUrl: WHOP_TARGET_URL,
+        paymentMethod: 'paypal_live',
+        paypalOrderId: finalOrderId,
+        paypalPayerEmail: payerEmail,
+        paypalStatus: finalStatus,
+        merchantPayPalEmail: merchantEmail,
+        createdAtIso: new Date().toISOString(),
+      };
+
+      serverSubscriptions.unshift(entry);
+      if (serverSubscriptions.length > 200) {
+        serverSubscriptions.pop();
+      }
+
+      return res.json({
+        success: true,
+        status: finalStatus,
+        orderId: finalOrderId,
+        tokensGranted,
+        subscription: entry,
+      });
+    } catch (err: any) {
+      return res.status(500).json({
+        error: err.message || 'No se pudo confirmar el pago de PayPal.',
+      });
+    }
+  });
 
   app.get('/api/registrations', (_req, res) => {
     res.json({
@@ -1136,6 +1452,7 @@ Devuelve un JSON en español con:
     res.json({
       success: true,
       targetUrl: WHOP_TARGET_URL,
+      merchantPayPalEmail: DEFAULT_PAYPAL_MERCHANT_EMAIL,
       subscriptions: serverSubscriptions,
     });
   });
@@ -1156,30 +1473,43 @@ Devuelve un JSON en español con:
         typeof body.subscriberEmail === 'string' && body.subscriberEmail.trim()
           ? body.subscriberEmail.trim().slice(0, 256)
           : 'suscriptor@reelify.ai',
-      packageId: typeof body.packageId === 'string' ? body.packageId.slice(0, 40) : 'tier-5',
+      packageId: typeof body.packageId === 'string' ? body.packageId.slice(0, 60) : 'tier-5',
       priceUsd,
       priceLabel:
         typeof body.priceLabel === 'string' && body.priceLabel.trim()
-          ? body.priceLabel.trim().slice(0, 30)
+          ? body.priceLabel.trim().slice(0, 40)
           : `$${priceUsd.toFixed(2)}`,
       tokensGranted,
       status: (body.status === 'paused' ? 'paused' : 'active') as 'active' | 'paused',
       billingCycle: (
         body.billingCycle === 'annual' || body.billingCycle === 'one_time' ? body.billingCycle : 'monthly'
       ) as 'monthly' | 'annual' | 'one_time',
-      pricingMode: (body.pricingMode === 'per_category' ? 'per_category' : 'single_all') as
-        | 'single_all'
-        | 'per_category',
+      pricingMode: (
+        body.pricingMode === 'per_category'
+          ? 'per_category'
+          : body.pricingMode === 'single'
+          ? 'single'
+          : 'single_all'
+      ) as 'single' | 'single_all' | 'per_category',
       categories: Array.isArray(body.categories)
-        ? body.categories.map((c: any) => String(c).slice(0, 60)).slice(0, 10)
-        : ['Presentaciones', 'Redes Sociales', 'Landing Pages', 'Mockups', 'Logos Animados'],
+        ? body.categories.map((c: any) => String(c).slice(0, 60)).slice(0, 12)
+        : ['Presentaciones', 'Redes Sociales', 'Landing Pages', 'Mockups 3D', 'Logos Animados'],
       deliveryFormats: Array.isArray(body.deliveryFormats)
-        ? body.deliveryFormats.map((f: any) => String(f).slice(0, 40)).slice(0, 10)
-        : ['Canva', 'Figma', 'Estudio 3D', 'MP4 / MP3'],
+        ? body.deliveryFormats.map((f: any) => String(f).slice(0, 40)).slice(0, 12)
+        : ['Canva', 'Figma', 'Estudio 3D', 'Video MP4', 'Audio MP3'],
       autoGrantCreditsOnSubscribe: body.autoGrantCreditsOnSubscribe !== false,
       autoTopUpLowBalance: Boolean(body.autoTopUpLowBalance),
+      autoRecharge: Boolean(body.autoRecharge),
       redirectToWhop: body.redirectToWhop !== false,
       targetUrl: WHOP_TARGET_URL,
+      paymentMethod: typeof body.paymentMethod === 'string' ? body.paymentMethod.slice(0, 40) : 'paypal_live',
+      paypalOrderId: typeof body.paypalOrderId === 'string' ? body.paypalOrderId.slice(0, 120) : '',
+      paypalPayerEmail: typeof body.paypalPayerEmail === 'string' ? body.paypalPayerEmail.slice(0, 256) : '',
+      paypalStatus: typeof body.paypalStatus === 'string' ? body.paypalStatus.slice(0, 40) : 'COMPLETED',
+      merchantPayPalEmail:
+        typeof body.merchantPayPalEmail === 'string' && body.merchantPayPalEmail.trim()
+          ? body.merchantPayPalEmail.trim().slice(0, 256)
+          : DEFAULT_PAYPAL_MERCHANT_EMAIL,
       createdAtIso: new Date().toISOString(),
     };
 

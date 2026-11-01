@@ -59,26 +59,32 @@
     },
     "Subscription": {
       "title": "Subscription",
-      "description": "User subscription preferences and token credit package granted to use the program.",
+      "description": "User subscription preferences, real PayPal payment records, and token credit package granted to use the program.",
       "type": "object",
       "properties": {
         "id": { "type": "string", "description": "Unique identifier for the subscription record." },
         "userId": { "type": "string", "description": "UID of the subscriber." },
         "subscriberName": { "type": "string", "maxLength": 120, "description": "Name of the subscriber." },
         "subscriberEmail": { "type": "string", "maxLength": 256, "description": "Email of the subscriber." },
-        "packageId": { "type": "string", "maxLength": 40, "description": "Selected token package ID (tier-5, tier-10, tier-25, tier-50, free-welcome)." },
+        "packageId": { "type": "string", "maxLength": 60, "description": "Selected token package ID (tier-5, tier-10, tier-25, tier-50, free-welcome)." },
         "priceUsd": { "type": "number", "description": "Subscription package price in USD." },
-        "priceLabel": { "type": "string", "maxLength": 30, "description": "Formatted price label ($5.00, $10.00, $25.00, $50.00)." },
+        "priceLabel": { "type": "string", "maxLength": 40, "description": "Formatted price label ($5.00, $10.00, $25.00, $50.00)." },
         "tokensGranted": { "type": "number", "description": "Tokens/credits granted to use the program (62500, 125000, 312500, 625000)." },
         "status": { "type": "string", "enum": ["active", "paused"], "description": "Subscription status." },
         "billingCycle": { "type": "string", "enum": ["monthly", "annual", "one_time"], "description": "Billing cycle preference." },
-        "pricingMode": { "type": "string", "enum": ["single_all", "per_category"], "description": "Pricing mode preference." },
+        "pricingMode": { "type": "string", "enum": ["single", "single_all", "per_category"], "description": "Pricing mode preference." },
         "categories": { "type": "array", "description": "Preferred creative categories." },
         "deliveryFormats": { "type": "array", "description": "Preferred delivery formats (Canva, Figma, 3D Studio, MP4/MP3)." },
         "autoGrantCreditsOnSubscribe": { "type": "boolean", "description": "Automatically grant credits upon subscribing." },
         "autoTopUpLowBalance": { "type": "boolean", "description": "Auto top-up tokens when balance is low." },
+        "autoRecharge": { "type": "boolean", "description": "Auto recharge tokens when balance is low." },
         "redirectToWhop": { "type": "boolean", "description": "Redirect to Whop on subscription checkout." },
         "targetUrl": { "type": "string", "maxLength": 200, "description": "Whop destination URL." },
+        "paymentMethod": { "type": "string", "maxLength": 40, "description": "Payment method used (paypal_live, paypal_checkout, whop, free_grant)." },
+        "paypalOrderId": { "type": "string", "maxLength": 120, "description": "PayPal Order or Capture Transaction ID." },
+        "paypalPayerEmail": { "type": "string", "maxLength": 256, "description": "PayPal payer email address." },
+        "paypalStatus": { "type": "string", "maxLength": 40, "description": "PayPal order status (COMPLETED, APPROVED, VERIFIED)." },
+        "merchantPayPalEmail": { "type": "string", "maxLength": 256, "description": "Merchant PayPal account receiving the payment." },
         "createdAt": { "type": "string", "format": "date-time", "description": "Timestamp of subscription." }
       },
       "required": ["userId", "packageId", "tokensGranted", "status", "createdAt"]
@@ -99,7 +105,7 @@
     },
     "/subscriptions/{subscriptionId}": {
       "schema": "Subscription",
-      "description": "User subscription preferences and token credit grants."
+      "description": "User subscription preferences, PayPal payment records, and token credit grants."
     }
   }
 }

@@ -85,26 +85,33 @@ service cloud.firestore {
           'id', 'userId', 'subscriberName', 'subscriberEmail', 'packageId',
           'priceUsd', 'priceLabel', 'tokensGranted', 'status', 'billingCycle',
           'pricingMode', 'categories', 'deliveryFormats',
-          'autoGrantCreditsOnSubscribe', 'autoTopUpLowBalance', 'redirectToWhop',
-          'targetUrl', 'createdAt'
+          'autoGrantCreditsOnSubscribe', 'autoTopUpLowBalance', 'autoRecharge',
+          'redirectToWhop', 'targetUrl', 'paymentMethod', 'paypalOrderId',
+          'paypalPayerEmail', 'paypalStatus', 'merchantPayPalEmail', 'createdAt'
         ])
         && data.userId == request.auth.uid
-        && data.packageId is string && data.packageId.size() >= 1 && data.packageId.size() <= 40
+        && data.packageId is string && data.packageId.size() >= 1 && data.packageId.size() <= 60
         && (data.tokensGranted is int || data.tokensGranted is float)
         && data.tokensGranted >= 0 && data.tokensGranted <= 10000000
         && data.status in ['active', 'paused']
         && (!('subscriberName' in data) || (data.subscriberName is string && data.subscriberName.size() <= 120))
         && (!('subscriberEmail' in data) || (data.subscriberEmail is string && data.subscriberEmail.size() <= 256))
         && (!('priceUsd' in data) || (data.priceUsd is int || data.priceUsd is float))
-        && (!('priceLabel' in data) || (data.priceLabel is string && data.priceLabel.size() <= 30))
+        && (!('priceLabel' in data) || (data.priceLabel is string && data.priceLabel.size() <= 40))
         && (!('billingCycle' in data) || data.billingCycle in ['monthly', 'annual', 'one_time'])
-        && (!('pricingMode' in data) || data.pricingMode in ['single_all', 'per_category'])
-        && (!('categories' in data) || (data.categories is list && data.categories.size() <= 10))
-        && (!('deliveryFormats' in data) || (data.deliveryFormats is list && data.deliveryFormats.size() <= 10))
+        && (!('pricingMode' in data) || data.pricingMode in ['single', 'single_all', 'per_category'])
+        && (!('categories' in data) || (data.categories is list && data.categories.size() <= 12))
+        && (!('deliveryFormats' in data) || (data.deliveryFormats is list && data.deliveryFormats.size() <= 12))
         && (!('autoGrantCreditsOnSubscribe' in data) || data.autoGrantCreditsOnSubscribe is bool)
         && (!('autoTopUpLowBalance' in data) || data.autoTopUpLowBalance is bool)
+        && (!('autoRecharge' in data) || data.autoRecharge is bool)
         && (!('redirectToWhop' in data) || data.redirectToWhop is bool)
-        && (!('targetUrl' in data) || (data.targetUrl is string && data.targetUrl.size() <= 200));
+        && (!('targetUrl' in data) || (data.targetUrl is string && data.targetUrl.size() <= 200))
+        && (!('paymentMethod' in data) || (data.paymentMethod is string && data.paymentMethod.size() <= 40))
+        && (!('paypalOrderId' in data) || (data.paypalOrderId is string && data.paypalOrderId.size() <= 120))
+        && (!('paypalPayerEmail' in data) || (data.paypalPayerEmail is string && data.paypalPayerEmail.size() <= 256))
+        && (!('paypalStatus' in data) || (data.paypalStatus is string && data.paypalStatus.size() <= 40))
+        && (!('merchantPayPalEmail' in data) || (data.merchantPayPalEmail is string && data.merchantPayPalEmail.size() <= 256));
     }
 
     // --- Collection Rules ---
@@ -152,8 +159,10 @@ service cloud.firestore {
         && incoming().createdAt == existing().createdAt
         && incoming().diff(existing()).affectedKeys().hasOnly([
           'status', 'billingCycle', 'pricingMode', 'categories', 'deliveryFormats',
-          'autoGrantCreditsOnSubscribe', 'autoTopUpLowBalance', 'redirectToWhop',
-          'packageId', 'priceUsd', 'priceLabel', 'tokensGranted'
+          'autoGrantCreditsOnSubscribe', 'autoTopUpLowBalance', 'autoRecharge',
+          'redirectToWhop', 'packageId', 'priceUsd', 'priceLabel', 'tokensGranted',
+          'paymentMethod', 'paypalOrderId', 'paypalPayerEmail', 'paypalStatus',
+          'merchantPayPalEmail'
         ]);
       allow delete: if isSignedIn() && (existing().userId == request.auth.uid || isAdmin());
     }

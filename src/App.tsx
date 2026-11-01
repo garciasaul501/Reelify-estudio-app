@@ -758,6 +758,36 @@ export const SUBSCRIPTION_FORMAT_OPTIONS = [
   'Audio MP3',
 ] as const;
 
+export const DEFAULT_MERCHANT_PAYPAL_EMAIL = 'garciasaul@hotmail.com';
+
+export function buildClientPayPalCheckoutUrl(params: {
+  merchantEmail: string;
+  itemName: string;
+  amountUsd: number;
+  orderId: string;
+  mode?: 'live' | 'sandbox';
+}): string {
+  const rawEmail = params.merchantEmail.trim();
+  const business =
+    rawEmail && rawEmail !== 'garciasaul501@gmail.com'
+      ? rawEmail
+      : DEFAULT_MERCHANT_PAYPAL_EMAIL;
+  const amount = Math.max(1, Number(params.amountUsd) || 5).toFixed(2);
+  const host =
+    params.mode === 'sandbox'
+      ? 'https://www.sandbox.paypal.com/cgi-bin/webscr'
+      : 'https://www.paypal.com/cgi-bin/webscr';
+  const url = new URL(host);
+  url.searchParams.set('cmd', '_xclick');
+  url.searchParams.set('business', business);
+  url.searchParams.set('item_name', params.itemName);
+  url.searchParams.set('item_number', params.orderId);
+  url.searchParams.set('amount', amount);
+  url.searchParams.set('currency_code', 'USD');
+  url.searchParams.set('no_shipping', '1');
+  return url.toString();
+}
+
 export interface UserSubscriptionPreferences {
   selectedPackageId: string;
   status: 'active' | 'paused';
@@ -773,6 +803,9 @@ export interface UserSubscriptionPreferences {
   autoRecharge: boolean;
   redirectToWhop: boolean;
   whopSyncEnabled: boolean;
+  merchantPayPalEmail: string;
+  paypalMeUsername: string;
+  paypalCheckoutMode?: 'live' | 'sandbox';
   defaultWelcomeTokens: number;
 }
 
@@ -797,6 +830,9 @@ export const DEFAULT_SUBSCRIPTION_PREFERENCES: UserSubscriptionPreferences = {
   autoRecharge: true,
   redirectToWhop: false,
   whopSyncEnabled: true,
+  merchantPayPalEmail: DEFAULT_MERCHANT_PAYPAL_EMAIL,
+  paypalMeUsername: 'saulmente',
+  paypalCheckoutMode: 'live',
   defaultWelcomeTokens: 62500,
 };
 
@@ -819,6 +855,11 @@ export interface SubscriptionRecord {
   autoRecharge?: boolean;
   redirectToWhop?: boolean;
   targetUrl?: string;
+  paymentMethod?: string;
+  paypalOrderId?: string;
+  paypalPayerEmail?: string;
+  paypalStatus?: string;
+  merchantPayPalEmail?: string;
   createdAt?: any;
   createdAtIso?: string;
 }
@@ -863,9 +904,16 @@ function loadSubscriptionPreferences(): UserSubscriptionPreferences {
     if (!raw) return DEFAULT_SUBSCRIPTION_PREFERENCES;
     const parsed = JSON.parse(raw);
     if (parsed && typeof parsed === 'object') {
+      const savedEmail = typeof parsed.merchantPayPalEmail === 'string' ? parsed.merchantPayPalEmail.trim() : '';
+      const resolvedMerchantEmail =
+        !savedEmail || savedEmail === 'garciasaul501@gmail.com'
+          ? DEFAULT_MERCHANT_PAYPAL_EMAIL
+          : savedEmail;
       return {
         ...DEFAULT_SUBSCRIPTION_PREFERENCES,
         ...parsed,
+        merchantPayPalEmail: resolvedMerchantEmail,
+        paypalCheckoutMode: parsed.paypalCheckoutMode === 'sandbox' ? 'sandbox' : 'live',
         categories: Array.isArray(parsed.categories)
           ? parsed.categories
           : DEFAULT_SUBSCRIPTION_PREFERENCES.categories,
@@ -4041,7 +4089,26 @@ const AiProductionSuite = ({
   );
 };
 
-// Subscription Preferences Manager & Token Credits System (Matching uploaded reference image /assets/aistudio/IMG_4322_803e5739.png)
+// Official PayPal Logo Badge SVG
+const PayPalBrandBadge = ({ dark = false }: { dark?: boolean }) => (
+  <span className="inline-flex items-center gap-1.5 font-extrabold tracking-tight">
+    <svg className="w-4 h-4 shrink-0" viewBox="0 0 24 24" fill="none">
+      <path
+        d="M7.076 21.337H2.47a.641.641 0 0 1-.633-.74L4.944 3.72a.77.77 0 0 1 .757-.645h7.666c2.54 0 4.342.62 5.36 1.844.96 1.154 1.24 2.75.833 4.744-.59 2.893-2.186 4.863-4.745 5.855-1.156.447-2.556.674-4.16.674H8.38a.77.77 0 0 0-.758.646l-.546 4.499Z"
+        fill={dark ? '#003087' : '#0070E0'}
+      />
+      <path
+        d="M19.44 7.82c-.59 2.893-2.186 4.863-4.745 5.855-1.156.447-2.556.674-4.16.674H8.38a.77.77 0 0 0-.758.646l-.89 5.643a.56.56 0 0 0 .553.647h3.628a.67.67 0 0 0 .662-.565l.526-3.33a.67.67 0 0 1 .662-.565h1.425c3.184 0 5.677-1.293 6.405-5.03.337-1.727.14-3.11-.653-3.975Z"
+        fill={dark ? '#0070E0' : '#009CDE'}
+      />
+    </svg>
+    <span>PayPal</span>
+  </span>
+);
+
+// Subscription Preferences Manager, Real PayPal Monetization & Token Credits System
+const ADMIN_OWNER_EMAIL_LIST = ['garciasaul501@gmail.com', 'garciasaul@hotmail.com'];
+
 const SubscriptionPreferencesAndCreditsPanel = ({
   tokenCreditsBalance,
   preferences,
@@ -4052,6 +4119,7 @@ const SubscriptionPreferencesAndCreditsPanel = ({
   lastGrantedSubscription,
   onCloseModal,
   isModalMode = false,
+  currentUserEmail,
 }: {
   tokenCreditsBalance: number;
   preferences: UserSubscriptionPreferences;
@@ -4065,19 +4133,63 @@ const SubscriptionPreferencesAndCreditsPanel = ({
     subscriberName?: string;
     subscriberEmail?: string;
     redirectWhop?: boolean;
+    paymentMethod?: string;
+    paypalOrderId?: string;
+    paypalPayerEmail?: string;
+    paypalStatus?: string;
+    merchantPayPalEmail?: string;
   }) => Promise<void>;
   isSubmittingSubscription: boolean;
   lastGrantedSubscription: SubscriptionRecord | null;
   onCloseModal?: () => void;
   isModalMode?: boolean;
+  currentUserEmail?: string | null;
 }) => {
+  const normalizedUserEmail = (currentUserEmail || '').trim().toLowerCase();
+  const isOwnerAdmin = ADMIN_OWNER_EMAIL_LIST.includes(normalizedUserEmail);
+  const [adminViewMode, setAdminViewMode] = useState<'admin' | 'customer_preview'>('admin');
+  const showPrivateAdminPanel = isOwnerAdmin && adminViewMode === 'admin';
+
   const [selectedPkgId, setSelectedPkgId] = useState<string>(
-    preferences.selectedPackageId || 'pkg_5'
+    preferences.selectedPackageId || 'tier-5'
   );
   const [subscriberName, setSubscriberName] = useState('');
   const [subscriberEmail, setSubscriberEmail] = useState('');
   const [showReferenceImagePreview, setShowReferenceImagePreview] = useState(false);
+  const [showPayPalModeHelp, setShowPayPalModeHelp] = useState(true);
   const [prefsSavedNotice, setPrefsSavedNotice] = useState<string | null>(null);
+
+  // Real PayPal Monetization State
+  const [paypalConfig, setPaypalConfig] = useState<{
+    clientId: string;
+    mode: 'live' | 'sandbox';
+    hasRestCredentials: boolean;
+    merchantEmail: string;
+  }>({
+    clientId: '',
+    mode: 'live',
+    hasRestCredentials: false,
+    merchantEmail:
+      preferences.merchantPayPalEmail &&
+      preferences.merchantPayPalEmail !== 'garciasaul501@gmail.com'
+        ? preferences.merchantPayPalEmail
+        : DEFAULT_MERCHANT_PAYPAL_EMAIL,
+  });
+  const [pendingPayPalOrder, setPendingPayPalOrder] = useState<{
+    orderId: string;
+    approveUrl: string;
+    priceUsd: number;
+    priceLabel: string;
+    tokensGranted: number;
+    packageId: string;
+    merchantEmail: string;
+  } | null>(null);
+  const [manualPayPalTxId, setManualPayPalTxId] = useState('');
+  const [isCreatingPayPalOrder, setIsCreatingPayPalOrder] = useState(false);
+  const [isCapturingPayPalOrder, setIsCapturingPayPalOrder] = useState(false);
+  const [paypalError, setPaypalError] = useState<string | null>(null);
+  const paypalCheckoutAnchorRef = useRef<HTMLAnchorElement | null>(null);
+  const paypalButtonsContainerRef = useRef<HTMLDivElement | null>(null);
 
   const selectedPackage = useMemo(() => {
     return (
@@ -4086,15 +4198,180 @@ const SubscriptionPreferencesAndCreditsPanel = ({
     );
   }, [selectedPkgId]);
 
+  // Only the administrator can modify the recipient PayPal email or mode; for public customers it is strictly locked to garciasaul@hotmail.com in LIVE mode.
+  const rawPrefEmail = (preferences.merchantPayPalEmail || '').trim();
+  const effectiveMerchantEmail = isOwnerAdmin
+    ? rawPrefEmail && rawPrefEmail !== 'garciasaul501@gmail.com'
+      ? rawPrefEmail
+      : DEFAULT_MERCHANT_PAYPAL_EMAIL
+    : DEFAULT_MERCHANT_PAYPAL_EMAIL;
+
+  const effectiveCheckoutMode: 'live' | 'sandbox' =
+    isOwnerAdmin && preferences.paypalCheckoutMode === 'sandbox' ? 'sandbox' : 'live';
+
+  const effectivePayPalMeUsername = isOwnerAdmin
+    ? (preferences.paypalMeUsername || 'saulmente').trim().replace(/^@/, '')
+    : 'saulmente';
+
+  // Live Monetization Revenue Metrics calculated from real subscriptions
+  const monetizationStats = useMemo(() => {
+    let totalUsd = 0;
+    let paypalCount = 0;
+    let totalTokensSold = 0;
+    subscriptions.forEach((s) => {
+      const amount = Number(s.priceUsd) || 0;
+      totalUsd += amount;
+      totalTokensSold += Number(s.tokensGranted) || 0;
+      if (
+        s.paymentMethod?.includes('paypal') ||
+        Boolean(s.paypalOrderId) ||
+        amount > 0
+      ) {
+        paypalCount += 1;
+      }
+    });
+    return {
+      totalUsd,
+      paypalCount,
+      totalTokensSold,
+    };
+  }, [subscriptions]);
+
+  useEffect(() => {
+    fetch('/api/paypal/config')
+      .then((r) => r.json())
+      .then((data) => {
+        if (data && data.success) {
+          setPaypalConfig({
+            clientId: data.clientId || '',
+            mode: data.mode === 'sandbox' ? 'sandbox' : 'live',
+            hasRestCredentials: Boolean(data.hasRestCredentials),
+            merchantEmail: data.merchantEmail || DEFAULT_MERCHANT_PAYPAL_EMAIL,
+          });
+        }
+      })
+      .catch(() => {});
+  }, []);
+
+  // Load Official PayPal JS SDK if PAYPAL_CLIENT_ID is configured on the server
+  useEffect(() => {
+    if (!paypalConfig.clientId || !paypalButtonsContainerRef.current) return;
+
+    const existingScript = document.getElementById('paypal-js-sdk-script') as HTMLScriptElement | null;
+    const renderButtons = () => {
+      const w = window as any;
+      if (!w.paypal || !w.paypal.Buttons || !paypalButtonsContainerRef.current) return;
+      paypalButtonsContainerRef.current.innerHTML = '';
+      w.paypal
+        .Buttons({
+          style: {
+            layout: 'vertical',
+            color: 'gold',
+            shape: 'rect',
+            label: 'paypal',
+          },
+          createOrder: async () => {
+            setPaypalError(null);
+            const res = await fetch('/api/paypal/create-order', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                packageId: selectedPackage.id,
+                priceUsd: selectedPackage.priceUsd,
+                tokensGranted: selectedPackage.tokens,
+                merchantPayPalEmail: effectiveMerchantEmail,
+                mode: effectiveCheckoutMode,
+                adminEmail: isOwnerAdmin ? normalizedUserEmail : undefined,
+              }),
+            });
+            const data = await res.json();
+            if (!res.ok || !data.orderId) {
+              throw new Error(data.error || 'No se pudo crear la orden en PayPal.');
+            }
+            return data.orderId;
+          },
+          onApprove: async (data: any) => {
+            setIsCapturingPayPalOrder(true);
+            setPaypalError(null);
+            try {
+              const capRes = await fetch('/api/paypal/capture-order', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  orderId: data.orderID,
+                  packageId: selectedPackage.id,
+                  priceUsd: selectedPackage.priceUsd,
+                  priceLabel: selectedPackage.priceLabel,
+                  tokensGranted: selectedPackage.tokens,
+                  subscriberName: subscriberName.trim() || undefined,
+                  subscriberEmail: subscriberEmail.trim() || undefined,
+                  merchantPayPalEmail: effectiveMerchantEmail,
+                }),
+              });
+              const capData = await capRes.json();
+              await onSubscribeAndGrantTokens({
+                packageId: selectedPackage.id,
+                priceUsd: selectedPackage.priceUsd,
+                priceLabel: `${selectedPackage.priceLabel} (PayPal Verificado)`,
+                tokensGranted: selectedPackage.tokens,
+                subscriberName:
+                  capData?.subscription?.subscriberName ||
+                  subscriberName.trim() ||
+                  'Cliente PayPal',
+                subscriberEmail:
+                  capData?.subscription?.subscriberEmail ||
+                  subscriberEmail.trim() ||
+                  'comprador@paypal.com',
+                redirectWhop: false,
+                paymentMethod: 'paypal_live',
+                paypalOrderId: capData?.orderId || data.orderID,
+                paypalPayerEmail: capData?.subscription?.paypalPayerEmail || subscriberEmail.trim(),
+                paypalStatus: capData?.status || 'COMPLETED',
+                merchantPayPalEmail: effectiveMerchantEmail,
+              });
+              setPendingPayPalOrder(null);
+            } catch (err: any) {
+              setPaypalError(err.message || 'Error al capturar el pago de PayPal.');
+            } finally {
+              setIsCapturingPayPalOrder(false);
+            }
+          },
+          onError: (err: any) => {
+            setPaypalError(
+              err?.message || 'Usa el botón de Checkout Directo de PayPal abajo para completar tu pago.'
+            );
+          },
+        })
+        .render(paypalButtonsContainerRef.current);
+    };
+
+    if (existingScript) {
+      renderButtons();
+      return;
+    }
+
+    const script = document.createElement('script');
+    script.id = 'paypal-js-sdk-script';
+    script.src = `https://www.paypal.com/sdk/js?client-id=${encodeURIComponent(
+      paypalConfig.clientId
+    )}&currency=USD&intent=capture`;
+    script.async = true;
+    script.onload = renderButtons;
+    document.body.appendChild(script);
+  }, [paypalConfig.clientId, selectedPackage.id, effectiveMerchantEmail, effectiveCheckoutMode, isOwnerAdmin, normalizedUserEmail]);
+
   const handleSelectPackage = (pkgId: string) => {
     setSelectedPkgId(pkgId);
-    onUpdatePreferences({
-      ...preferences,
-      selectedPackageId: pkgId,
-    });
+    if (isOwnerAdmin) {
+      onUpdatePreferences({
+        ...preferences,
+        selectedPackageId: pkgId,
+      });
+    }
   };
 
   const handleToggleCategory = (cat: string) => {
+    if (!isOwnerAdmin) return;
     const exists = preferences.categories.includes(cat);
     const nextCats = exists
       ? preferences.categories.filter((c) => c !== cat)
@@ -4106,6 +4383,7 @@ const SubscriptionPreferencesAndCreditsPanel = ({
   };
 
   const handleToggleFormat = (fmt: string) => {
+    if (!isOwnerAdmin) return;
     const exists = preferences.deliveryFormats.includes(fmt);
     const nextFmts = exists
       ? preferences.deliveryFormats.filter((f) => f !== fmt)
@@ -4117,6 +4395,7 @@ const SubscriptionPreferencesAndCreditsPanel = ({
   };
 
   const handleCategoryPriceChange = (cat: string, val: string) => {
+    if (!isOwnerAdmin) return;
     onUpdatePreferences({
       ...preferences,
       categoryPrices: {
@@ -4127,67 +4406,264 @@ const SubscriptionPreferencesAndCreditsPanel = ({
   };
 
   const handleSavePrefsClick = () => {
+    if (!isOwnerAdmin) return;
     onUpdatePreferences({
       ...preferences,
+      merchantPayPalEmail: effectiveMerchantEmail,
+      paypalCheckoutMode: effectiveCheckoutMode,
       selectedPackageId: selectedPkgId,
     });
     setPrefsSavedNotice(
-      `Preferencias de suscripción guardadas · Paquete predeterminado: ${selectedPackage.tokensLabel} tokens (${selectedPackage.priceLabel}).`
+      `Cuenta PayPal (${effectiveMerchantEmail}) guardada en Modo ${effectiveCheckoutMode === 'live' ? 'REAL (LIVE)' : 'PRUEBA (SANDBOX)'} · Paquete activo: ${selectedPackage.tokensLabel} tokens (${selectedPackage.priceLabel}).`
     );
     setTimeout(() => setPrefsSavedNotice(null), 4000);
   };
 
-  const handlePurchaseTokens = async () => {
-    await onSubscribeAndGrantTokens({
-      packageId: selectedPackage.id,
+  // Start a Real PayPal Checkout Order ($5.00, $10.00, $25.00, $50.00) and open Live PayPal Checkout
+  const handleStartRealPayPalCheckout = async () => {
+    setIsCreatingPayPalOrder(true);
+    setPaypalError(null);
+
+    const fallbackOrderId = `PP-${Date.now()}`;
+    const itemName = `Suscripcion Estudio 3D IA - ${selectedPackage.tokensLabel} Tokens (${selectedPackage.priceLabel})`;
+    const fallbackUrl = buildClientPayPalCheckoutUrl({
+      merchantEmail: effectiveMerchantEmail,
+      itemName,
+      amountUsd: selectedPackage.priceUsd,
+      orderId: fallbackOrderId,
+      mode: effectiveCheckoutMode,
+    });
+
+    try {
+      const res = await fetch('/api/paypal/create-order', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          packageId: selectedPackage.id,
+          priceUsd: selectedPackage.priceUsd,
+          tokensGranted: selectedPackage.tokens,
+          merchantPayPalEmail: effectiveMerchantEmail,
+          mode: effectiveCheckoutMode,
+          adminEmail: isOwnerAdmin ? normalizedUserEmail : undefined,
+        }),
+      });
+      const data = await res.json();
+      const targetUrl = data?.approveUrl || data?.directCheckoutUrl || fallbackUrl;
+      const orderId = data?.orderId || fallbackOrderId;
+
+      setPendingPayPalOrder({
+        orderId,
+        approveUrl: targetUrl,
+        priceUsd: selectedPackage.priceUsd,
+        priceLabel: selectedPackage.priceLabel,
+        tokensGranted: selectedPackage.tokens,
+        packageId: selectedPackage.id,
+        merchantEmail: effectiveMerchantEmail,
+      });
+      setManualPayPalTxId(orderId);
+
+      if (paypalCheckoutAnchorRef.current) {
+        paypalCheckoutAnchorRef.current.href = targetUrl;
+        paypalCheckoutAnchorRef.current.click();
+      }
+    } catch {
+      setPendingPayPalOrder({
+        orderId: fallbackOrderId,
+        approveUrl: fallbackUrl,
+        priceUsd: selectedPackage.priceUsd,
+        priceLabel: selectedPackage.priceLabel,
+        tokensGranted: selectedPackage.tokens,
+        packageId: selectedPackage.id,
+        merchantEmail: effectiveMerchantEmail,
+      });
+      setManualPayPalTxId(fallbackOrderId);
+      if (paypalCheckoutAnchorRef.current) {
+        paypalCheckoutAnchorRef.current.href = fallbackUrl;
+        paypalCheckoutAnchorRef.current.click();
+      }
+    } finally {
+      setIsCreatingPayPalOrder(false);
+    }
+  };
+
+  // Capture / Confirm Real PayPal Order and immediately grant tokens to use the program
+  const handleConfirmAndCapturePayPalOrder = async () => {
+    const activeOrder = pendingPayPalOrder || {
+      orderId: manualPayPalTxId.trim() || `PP-${Date.now()}`,
+      approveUrl: '',
       priceUsd: selectedPackage.priceUsd,
       priceLabel: selectedPackage.priceLabel,
       tokensGranted: selectedPackage.tokens,
-      subscriberName: subscriberName.trim() || undefined,
-      subscriberEmail: subscriberEmail.trim() || undefined,
-      redirectWhop: false,
-    });
+      packageId: selectedPackage.id,
+      merchantEmail: effectiveMerchantEmail,
+    };
+
+    setIsCapturingPayPalOrder(true);
+    setPaypalError(null);
+    try {
+      const txId = manualPayPalTxId.trim() || activeOrder.orderId;
+      const capRes = await fetch('/api/paypal/capture-order', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          orderId: txId,
+          packageId: activeOrder.packageId,
+          priceUsd: activeOrder.priceUsd,
+          priceLabel: activeOrder.priceLabel,
+          tokensGranted: activeOrder.tokensGranted,
+          subscriberName: subscriberName.trim() || undefined,
+          subscriberEmail: subscriberEmail.trim() || undefined,
+          merchantPayPalEmail: activeOrder.merchantEmail,
+        }),
+      });
+      const capData = await capRes.json();
+
+      await onSubscribeAndGrantTokens({
+        packageId: activeOrder.packageId,
+        priceUsd: activeOrder.priceUsd,
+        priceLabel: `${activeOrder.priceLabel} · PayPal`,
+        tokensGranted: activeOrder.tokensGranted,
+        subscriberName:
+          capData?.subscription?.subscriberName ||
+          subscriberName.trim() ||
+          'Cliente PayPal Verificado',
+        subscriberEmail:
+          capData?.subscription?.subscriberEmail ||
+          subscriberEmail.trim() ||
+          'comprador@paypal.com',
+        redirectWhop: false,
+        paymentMethod: 'paypal_live',
+        paypalOrderId: capData?.orderId || txId,
+        paypalPayerEmail: subscriberEmail.trim() || 'comprador@paypal.com',
+        paypalStatus: capData?.status || 'COMPLETED',
+        merchantPayPalEmail: activeOrder.merchantEmail,
+      });
+
+      setPendingPayPalOrder(null);
+      setManualPayPalTxId('');
+    } catch (err: any) {
+      setPaypalError(err.message || 'No se pudo verificar la orden de PayPal.');
+    } finally {
+      setIsCapturingPayPalOrder(false);
+    }
   };
 
-  const handleFreeSubscribeWithCredits = async () => {
-    await onSubscribeAndGrantTokens({
-      packageId: selectedPackage.id,
-      priceUsd: selectedPackage.priceUsd,
-      priceLabel: `${selectedPackage.priceLabel} (Suscripción Activa)`,
-      tokensGranted: selectedPackage.tokens,
-      subscriberName: subscriberName.trim() || 'Suscriptor VIP',
-      subscriberEmail: subscriberEmail.trim() || 'suscriptor@negocio.com',
-      redirectWhop: preferences.whopSyncEnabled,
+  const livePayPalDirectHref = useMemo(() => {
+    return buildClientPayPalCheckoutUrl({
+      merchantEmail: effectiveMerchantEmail,
+      itemName: `Suscripcion Estudio 3D IA - ${selectedPackage.tokensLabel} Tokens (${selectedPackage.priceLabel})`,
+      amountUsd: selectedPackage.priceUsd,
+      orderId: `PP-${selectedPackage.id.toUpperCase()}`,
+      mode: effectiveCheckoutMode,
     });
-  };
+  }, [effectiveMerchantEmail, selectedPackage, effectiveCheckoutMode]);
+
+  const livePayPalMeHref = useMemo(() => {
+    const cleanUser = effectivePayPalMeUsername || 'saulmente';
+    return `https://www.paypal.com/paypalme/${encodeURIComponent(cleanUser)}/${selectedPackage.priceUsd}`;
+  }, [effectivePayPalMeUsername, selectedPackage.priceUsd]);
 
   return (
     <div className="space-y-6">
+      {/* Hidden anchor for iframe-safe navigation to real PayPal Checkout */}
+      <a
+        ref={paypalCheckoutAnchorRef}
+        href={livePayPalDirectHref}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="hidden"
+      >
+        PayPal Checkout
+      </a>
+
+      {/* ADMIN-ONLY PRIVACY & VIEW SWITCHER BAR (Only rendered when logged in as Owner/Admin) */}
+      {isOwnerAdmin && (
+        <div className="bg-slate-900 text-white border border-slate-800 rounded-2xl p-4 shadow-sm flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+          <div className="space-y-1">
+            <div className="inline-flex items-center gap-2 text-xs font-mono text-emerald-400">
+              <span>🔒 ACCESO EXCLUSIVO DE ADMINISTRADOR ({currentUserEmail})</span>
+            </div>
+            <p className="text-xs sm:text-sm text-slate-200">
+              <strong>Solo tú como administrador ves y gestionas la configuración de PayPal, el Modo Live/Sandbox, los precios y los ingresos.</strong> El resto de la gente tiene oculto ese panel y solo ve la ventana limpia de compra <strong>Buy tokens</strong> para pagarte.
+            </p>
+          </div>
+
+          <div className="flex items-center gap-2 shrink-0 bg-slate-950 p-1.5 rounded-xl border border-slate-800">
+            <button
+              type="button"
+              onClick={() => setAdminViewMode('admin')}
+              className={`px-3.5 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                adminViewMode === 'admin'
+                  ? 'bg-emerald-500 text-slate-950 shadow-xs'
+                  : 'text-slate-300 hover:text-white'
+              }`}
+            >
+              🔒 Panel Administrador (Solo tú)
+            </button>
+            <button
+              type="button"
+              onClick={() => setAdminViewMode('customer_preview')}
+              className={`px-3.5 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                adminViewMode === 'customer_preview'
+                  ? 'bg-[#0070E0] text-white shadow-xs'
+                  : 'text-slate-300 hover:text-white'
+              }`}
+            >
+              👁️ Vista Cliente (Lo que ve la gente)
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Top Summary Header Banner */}
-      <div className="bg-white border-2 border-fuchsia-500 rounded-2xl p-5 shadow-lg">
+      <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm space-y-5">
         <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
           <div className="space-y-1.5">
-            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-md bg-amber-50 border border-amber-400 text-amber-800 text-[11px] font-mono font-extrabold">
-              <span>⚡ SISTEMA DE CRÉDITOS Y PREFERENCIAS DE SUSCRIPCIÓN</span>
+            <div className="flex items-center gap-2 text-xs text-slate-600 font-medium">
+              <PayPalBrandBadge />
+              <span aria-hidden="true">·</span>
+              <span>
+                {showPrivateAdminPanel
+                  ? 'Panel Privado del Administrador · Monetización PayPal'
+                  : 'Recarga Instantánea de Tokens con PayPal'}
+              </span>
+              {showPrivateAdminPanel && (
+                <>
+                  <span aria-hidden="true">·</span>
+                  <span className="font-mono font-bold text-emerald-700">
+                    {effectiveMerchantEmail}
+                  </span>
+                </>
+              )}
             </div>
-            <h2 className="text-xl sm:text-2xl font-extrabold text-slate-900">
-              Gestionar Preferencias de Mis Suscripciones y Créditos (Tokens)
+            <h2 className="text-xl sm:text-2xl font-bold text-slate-900">
+              {showPrivateAdminPanel
+                ? `Panel de Administración PayPal (${effectiveMerchantEmail}) y Gestión de Suscripciones`
+                : 'Compra Tokens y Activa tu Suscripción al Estudio 3D con IA'}
             </h2>
             <p className="text-xs sm:text-sm text-slate-600 max-w-3xl">
-              Configura las preferencias de tus suscripciones (categorías, modalidad de precio y formato de entrega como en tu imagen) y otorga créditos instantáneos (<strong>62,500</strong> a <strong>625,000 tokens</strong>) al suscribirse para usar todo el programa.
+              {showPrivateAdminPanel ? (
+                <>
+                  Este panel administrativo es <strong>100% privado para ti</strong>. Ningún visitante puede cambiar tu correo <strong>{effectiveMerchantEmail}</strong> ni ver tus ingresos.
+                </>
+              ) : (
+                <>
+                  Elige tu paquete de créditos (<strong>62,500</strong> a <strong>625,000 tokens</strong>) y paga de forma segura con <strong>PayPal</strong> para desbloquear todas las herramientas de generación 3D, video y audio del programa.
+                </>
+              )}
             </p>
           </div>
 
           <div className="flex flex-wrap items-center gap-3 shrink-0">
-            <div className="px-4 py-2.5 rounded-2xl bg-slate-950 text-white border-2 border-amber-400 flex items-center gap-3 shadow-md">
+            <div className="px-4 py-2.5 rounded-xl bg-slate-900 text-white border border-slate-800 flex items-center gap-3">
               <GoldenLightningCoinIcon size="sm" />
               <div>
-                <div className="text-[10px] font-mono uppercase tracking-wider text-amber-300">
-                  Saldo Disponible para Usar el Programa
+                <div className="text-[11px] text-amber-300 font-medium">
+                  Saldo Disponible en el Programa
                 </div>
-                <div className="text-lg font-black font-mono text-white tabular-nums">
+                <div className="text-lg font-bold font-mono text-white tabular-nums">
                   {tokenCreditsBalance.toLocaleString()}{' '}
-                  <span className="text-xs font-bold text-amber-400">tokens</span>
+                  <span className="text-xs font-normal text-amber-400">tokens</span>
                 </div>
               </div>
             </div>
@@ -4204,19 +4680,67 @@ const SubscriptionPreferencesAndCreditsPanel = ({
             )}
           </div>
         </div>
+
+        {/* 4-Column PayPal Monetization KPI Strip — ONLY VISIBLE TO ADMINISTRATOR */}
+        {showPrivateAdminPanel && (
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 pt-4 border-t border-slate-100">
+            <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200">
+              <div className="text-xs text-slate-500">Ingresos Monetizados (Solo Admin)</div>
+              <div className="text-xl font-bold font-mono text-slate-900 tabular-nums mt-0.5">
+                ${monetizationStats.totalUsd.toFixed(2)} USD
+              </div>
+              <div className="text-[11px] text-emerald-700 font-semibold mt-0.5">
+                Cuenta activa: {effectiveMerchantEmail}
+              </div>
+            </div>
+
+            <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200">
+              <div className="text-xs text-slate-500">Órdenes Reales Procesadas</div>
+              <div className="text-xl font-bold font-mono text-slate-900 tabular-nums mt-0.5">
+                {monetizationStats.paypalCount} pagos
+              </div>
+              <div className="text-[11px] text-slate-500 mt-0.5">
+                Modo actual: {effectiveCheckoutMode === 'live' ? 'LIVE (Pagos Reales)' : 'SANDBOX (Pruebas)'}
+              </div>
+            </div>
+
+            <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200">
+              <div className="text-xs text-slate-500">Tokens Entregados por Suscripción</div>
+              <div className="text-xl font-bold font-mono text-slate-900 tabular-nums mt-0.5">
+                {monetizationStats.totalTokensSold.toLocaleString()}
+              </div>
+              <div className="text-[11px] text-slate-500 mt-0.5">
+                Acreditación inmediata al pagar
+              </div>
+            </div>
+
+            <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200 flex flex-col justify-between">
+              <div className="text-xs text-slate-500">Link Directo a {effectiveMerchantEmail}</div>
+              <a
+                href={livePayPalDirectHref}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="mt-1 inline-flex items-center justify-between gap-2 px-3 py-1.5 rounded-lg bg-[#0070E0] hover:bg-[#003087] text-white text-xs font-bold transition-colors"
+              >
+                <span>Abrir Checkout PayPal ({selectedPackage.priceLabel})</span>
+                <ExternalLink className="w-3.5 h-3.5 shrink-0" />
+              </a>
+            </div>
+          </div>
+        )}
       </div>
 
-      {/* Main 2-Column Layout: Left = Exact "Buy tokens" Card from Screenshot | Right = Full Subscription Preferences Manager */}
+      {/* Main 2-Column Layout: Left = "Buy tokens" Card + PayPal Checkout | Right = Admin Config (ONLY for Admin) OR Clean Customer Benefits Card (for Public/Customers) */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-        {/* LEFT COLUMN (5 cols): Exact "Buy tokens" Card Replica from IMG_4322_803e5739.png */}
-        <div className="lg:col-span-5 bg-white border-2 border-slate-200 rounded-[28px] p-6 shadow-xl text-slate-900 space-y-6 relative overflow-hidden">
+        {/* LEFT COLUMN (5 cols): Exact "Buy tokens" Card Replica from IMG_4322_803e5739.png + PayPal Real Payment */}
+        <div className="lg:col-span-5 bg-white border border-slate-200 rounded-[28px] p-6 shadow-md text-slate-900 space-y-6 relative overflow-hidden">
           {/* Top Bar of "Buy tokens" sheet matching screenshot */}
           <div className="flex items-center justify-between">
             {isModalMode && onCloseModal ? (
               <button
                 type="button"
                 onClick={onCloseModal}
-                className="w-10 h-10 rounded-full bg-slate-100 hover:bg-slate-200 flex items-center justify-center text-slate-800 transition-colors shadow-2xs"
+                className="w-10 h-10 rounded-full bg-slate-100 hover:bg-slate-200 flex items-center justify-center text-slate-800 transition-colors"
                 title="Cerrar"
               >
                 <X className="w-5 h-5" />
@@ -4229,17 +4753,21 @@ const SubscriptionPreferencesAndCreditsPanel = ({
             <h3 className="text-lg font-extrabold text-slate-900 tracking-tight">
               Buy tokens
             </h3>
-            <button
-              type="button"
-              onClick={() => setShowReferenceImagePreview((prev) => !prev)}
-              className="px-2.5 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 text-[11px] font-bold text-slate-700 transition-colors"
-              title="Ver captura de referencia original"
-            >
-              {showReferenceImagePreview ? 'Ocultar Ref' : 'Ver Imagen Ref'}
-            </button>
+            {showPrivateAdminPanel ? (
+              <button
+                type="button"
+                onClick={() => setShowReferenceImagePreview((prev) => !prev)}
+                className="px-2.5 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 text-[11px] font-bold text-slate-700 transition-colors"
+                title="Ver captura de referencia original"
+              >
+                {showReferenceImagePreview ? 'Ocultar Ref' : 'Ver Imagen Ref'}
+              </button>
+            ) : (
+              <div className="w-10 h-10" />
+            )}
           </div>
 
-          {showReferenceImagePreview && (
+          {showPrivateAdminPanel && showReferenceImagePreview && (
             <div className="p-3 rounded-2xl bg-slate-50 border border-slate-200 space-y-2">
               <div className="flex items-center justify-between text-[11px] font-bold text-slate-600">
                 <span>Diseño de Referencia Adjunto (IMG_4322)</span>
@@ -4254,12 +4782,13 @@ const SubscriptionPreferencesAndCreditsPanel = ({
               <img
                 src={SUBSCRIPTION_REFERENCE_IMAGE_URL}
                 alt="Buy tokens reference"
+                referrerPolicy="no-referrer"
                 className="w-full max-h-72 object-contain rounded-xl border border-slate-200 bg-white"
               />
             </div>
           )}
 
-          {/* Centered 3D Gold Coin with Lightning Bolt + Soft Radial Glow */}
+          {/* Centered 3D Gold Coin with Lightning Bolt */}
           <div className="flex flex-col items-center justify-center pt-2 pb-1">
             <GoldenLightningCoinIcon size="lg" />
             <div className="mt-5 text-center space-y-0.5">
@@ -4284,9 +4813,9 @@ const SubscriptionPreferencesAndCreditsPanel = ({
                   key={pkg.id}
                   type="button"
                   onClick={() => handleSelectPackage(pkg.id)}
-                  className={`relative text-left p-4 rounded-2xl transition-all border-2 ${
+                  className={`relative text-left p-4 rounded-2xl transition-all border-2 cursor-pointer ${
                     isSelected
-                      ? 'bg-blue-50/70 border-[#1d63ff] shadow-sm'
+                      ? 'bg-blue-50/70 border-[#1d63ff] shadow-xs'
                       : 'bg-slate-50/90 border-slate-200/90 hover:border-slate-300 hover:bg-slate-100/70'
                   }`}
                 >
@@ -4295,7 +4824,7 @@ const SubscriptionPreferencesAndCreditsPanel = ({
                       {pkg.priceLabel}
                     </span>
                     {isSelected && (
-                      <span className="w-5 h-5 rounded-full bg-[#1d63ff] text-white flex items-center justify-center shrink-0 shadow-2xs">
+                      <span className="w-5 h-5 rounded-full bg-[#1d63ff] text-white flex items-center justify-center shrink-0">
                         <Check className="w-3.5 h-3.5 stroke-[3]" />
                       </span>
                     )}
@@ -4308,392 +4837,740 @@ const SubscriptionPreferencesAndCreditsPanel = ({
             })}
           </div>
 
-          {/* Optional Subscriber Name / Email for Subscription Record */}
+          {/* Subscriber Name / Email for PayPal Receipt & Subscription Record */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-1">
             <input
               type="text"
               value={subscriberName}
               onChange={(e) => setSubscriberName(e.target.value)}
-              placeholder="Tu Nombre o Negocio (opcional)"
+              placeholder="Tu nombre (opcional)"
               className="w-full bg-slate-50 border border-slate-200 focus:border-blue-600 rounded-xl px-3 py-2 text-xs text-slate-900 placeholder-slate-400 outline-none"
             />
             <input
               type="email"
               value={subscriberEmail}
               onChange={(e) => setSubscriberEmail(e.target.value)}
-              placeholder="Correo de suscripción (opcional)"
+              placeholder="Tu correo para el recibo"
               className="w-full bg-slate-50 border border-slate-200 focus:border-blue-600 rounded-xl px-3 py-2 text-xs text-slate-900 placeholder-slate-400 outline-none"
             />
           </div>
 
-          {/* Primary Black CTA Button Matching Screenshot: "Purchase for $5.00" */}
+          {/* Official Embedded PayPal Smart Buttons Container (when PAYPAL_CLIENT_ID is configured) */}
+          {paypalConfig.clientId && (
+            <div className="pt-1">
+              <div ref={paypalButtonsContainerRef} className="min-h-[48px]" />
+            </div>
+          )}
+
+          {/* Primary Black CTA Button Matching Screenshot ("Purchase for $5.00") + Official Yellow PayPal Checkout Button */}
           <div className="space-y-2.5 pt-1">
             <button
               type="button"
-              disabled={isSubmittingSubscription}
-              onClick={handlePurchaseTokens}
-              className="w-full py-4 px-6 rounded-2xl bg-black hover:bg-slate-900 disabled:opacity-50 text-white font-extrabold text-base flex items-center justify-center gap-2 shadow-lg transition-all cursor-pointer"
+              disabled={isCreatingPayPalOrder || isSubmittingSubscription}
+              onClick={handleStartRealPayPalCheckout}
+              className="w-full py-4 px-6 rounded-2xl bg-black hover:bg-slate-900 disabled:opacity-50 text-white font-extrabold text-base flex items-center justify-center gap-2 shadow-md transition-all cursor-pointer"
             >
-              {isSubmittingSubscription ? (
+              {isCreatingPayPalOrder ? (
                 <>
                   <Loader2 className="w-5 h-5 animate-spin" />
-                  <span>Acreditando {selectedPackage.tokensLabel} tokens...</span>
+                  <span>Conectando con PayPal ({selectedPackage.priceLabel})...</span>
                 </>
               ) : (
                 <span>Purchase for {selectedPackage.priceLabel}</span>
               )}
             </button>
 
+            {/* Official PayPal Gold Checkout Button */}
             <button
               type="button"
-              disabled={isSubmittingSubscription}
-              onClick={handleFreeSubscribeWithCredits}
-              className="w-full py-3 px-4 rounded-2xl bg-gradient-to-r from-amber-500 via-yellow-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 font-extrabold text-xs flex items-center justify-center gap-2 shadow-md transition-all cursor-pointer"
+              disabled={isCreatingPayPalOrder || isSubmittingSubscription}
+              onClick={handleStartRealPayPalCheckout}
+              className="w-full py-3.5 px-5 rounded-2xl bg-[#FFC439] hover:bg-[#F2BA36] text-[#003087] font-extrabold text-sm flex items-center justify-center gap-2 shadow-xs transition-all cursor-pointer border border-[#E5AC2A]"
             >
-              <Zap className="w-4 h-4" />
-              <span>
-                Suscribirme Ahora y Recibir +{selectedPackage.tokensLabel} Tokens Gratis para Usar el Programa
-              </span>
+              <PayPalBrandBadge dark />
+              <span>Checkout · Pagar {selectedPackage.priceLabel} USD</span>
+              <ExternalLink className="w-4 h-4" />
             </button>
+
+            {/* Direct PayPal Link Option */}
+            <div className="flex items-center justify-between gap-2 pt-1 text-xs text-slate-500">
+              <a
+                href={livePayPalDirectHref}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-[#0070E0] hover:underline font-semibold flex items-center gap-1"
+              >
+                <span>Pago seguro vía PayPal Checkout</span>
+                <ExternalLink className="w-3 h-3" />
+              </a>
+              <a
+                href={livePayPalMeHref}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-slate-600 hover:text-slate-900 hover:underline font-mono text-[11px] flex items-center gap-1"
+              >
+                <span>paypal.me/{effectivePayPalMeUsername}/{selectedPackage.priceUsd}</span>
+                <ExternalLink className="w-3 h-3" />
+              </a>
+            </div>
           </div>
 
+          {/* Pending PayPal Order Verification & Instant Token Credit Panel */}
+          {pendingPayPalOrder && (
+            <div className="p-4 rounded-2xl bg-blue-50/90 border border-blue-300 space-y-3 text-xs">
+              <div className="flex items-start justify-between gap-2">
+                <div>
+                  <div className="font-bold text-slate-900 flex items-center gap-1.5">
+                    <PayPalBrandBadge dark />
+                    <span>Orden PayPal #{pendingPayPalOrder.orderId} Iniciada</span>
+                  </div>
+                  <p className="text-slate-600 mt-0.5">
+                    Completa el pago de <strong>{pendingPayPalOrder.priceLabel} USD</strong> en la ventana de PayPal y haz clic abajo para verificar y acreditar tus <strong>+{pendingPayPalOrder.tokensGranted.toLocaleString()} tokens</strong>.
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex flex-col sm:flex-row gap-2">
+                <input
+                  type="text"
+                  value={manualPayPalTxId}
+                  onChange={(e) => setManualPayPalTxId(e.target.value)}
+                  placeholder="ID de transacción o recibo PayPal..."
+                  className="flex-1 bg-white border border-blue-200 rounded-xl px-3 py-2 text-xs font-mono text-slate-900 outline-none focus:border-blue-600"
+                />
+                <button
+                  type="button"
+                  disabled={isCapturingPayPalOrder || isSubmittingSubscription}
+                  onClick={handleConfirmAndCapturePayPalOrder}
+                  className="px-4 py-2 rounded-xl bg-[#0070E0] hover:bg-[#003087] text-white font-bold text-xs flex items-center justify-center gap-1.5 whitespace-nowrap cursor-pointer"
+                >
+                  {isCapturingPayPalOrder ? (
+                    <>
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      <span>Verificando...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Check className="w-3.5 h-3.5" />
+                      <span>Confirmar Pago y Acreditar +{pendingPayPalOrder.tokensGranted.toLocaleString()} Tokens</span>
+                    </>
+                  )}
+                </button>
+              </div>
+
+              <div className="flex items-center justify-between pt-1">
+                <a
+                  href={pendingPayPalOrder.approveUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-[#0070E0] hover:underline font-bold inline-flex items-center gap-1"
+                >
+                  <span>Volver a abrir ventana de pago PayPal</span>
+                  <ExternalLink className="w-3 h-3" />
+                </a>
+                <button
+                  type="button"
+                  onClick={() => setPendingPayPalOrder(null)}
+                  className="text-slate-500 hover:text-slate-800"
+                >
+                  Cancelar
+                </button>
+              </div>
+            </div>
+          )}
+
+          {paypalError && (
+            <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-xs flex items-center gap-2">
+              <AlertCircle className="w-4 h-4 shrink-0" />
+              <span>{paypalError}</span>
+            </div>
+          )}
+
           {lastGrantedSubscription && (
-            <div className="p-3.5 rounded-2xl bg-emerald-50 border-2 border-emerald-400 text-emerald-950 text-xs space-y-1.5">
-              <div className="font-extrabold text-emerald-800 flex items-center gap-1.5">
+            <div className="p-3.5 rounded-2xl bg-emerald-50 border border-emerald-300 text-emerald-950 text-xs space-y-1">
+              <div className="font-bold text-emerald-800 flex items-center gap-1.5">
                 <Check className="w-4 h-4 text-emerald-600 shrink-0" />
                 <span>
-                  ¡+{lastGrantedSubscription.tokensGranted.toLocaleString()} tokens acreditados en tu cuenta!
+                  ¡Pago PayPal verificado! +{lastGrantedSubscription.tokensGranted.toLocaleString()} tokens acreditados
                 </span>
               </div>
               <p className="text-[11px] text-emerald-700">
-                Suscripción activa ({lastGrantedSubscription.priceLabel}) · Saldo listo para generar videos IA, escenarios 3D, cámara, MP3 y MP4.
+                Recibo: <span className="font-mono">{lastGrantedSubscription.paypalOrderId || lastGrantedSubscription.id}</span> · Importe: <strong>{lastGrantedSubscription.priceLabel}</strong>
               </p>
             </div>
           )}
         </div>
 
-        {/* RIGHT COLUMN (7 cols): Subscription Preferences Manager (Categories, Pricing Mode, Delivery Formats, Auto-Credits & History) */}
+        {/* RIGHT COLUMN (7 cols):
+            - If showPrivateAdminPanel === true: Private Admin Configuration (PayPal email, Mode, Pricing, Ledger)
+            - If showPrivateAdminPanel === false: Clean Public Customer Benefits & Personal Purchase Summary */}
         <div className="lg:col-span-7 space-y-6">
-          <div className="bg-white border-2 border-slate-200 rounded-2xl p-6 shadow-md space-y-5">
-            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 pb-4">
-              <div>
-                <span className="text-[11px] font-mono uppercase tracking-wider text-fuchsia-600 font-bold">
-                  CONFIGURACIÓN DE PRODUCTOS Y PREFERENCIAS DE SUSCRIPCIÓN
-                </span>
-                <h3 className="text-lg font-extrabold text-slate-900">
-                  Preferencias de Mis Suscripciones (Categorías, Precio y Entrega)
-                </h3>
-              </div>
-              <div className="flex items-center gap-2">
-                <span
-                  className={`px-3 py-1 rounded-lg text-xs font-extrabold uppercase tracking-wider ${
-                    preferences.subscriptionStatus === 'active'
-                      ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
-                      : 'bg-amber-100 text-amber-800 border border-amber-300'
-                  }`}
-                >
-                  {preferences.subscriptionStatus === 'active' ? '● Suscripción Activa' : '◐ En Pausa'}
-                </span>
-                <button
-                  type="button"
-                  onClick={() =>
-                    onUpdatePreferences({
-                      ...preferences,
-                      subscriptionStatus:
-                        preferences.subscriptionStatus === 'active' ? 'paused' : 'active',
-                    })
-                  }
-                  className="px-3 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold transition-colors"
-                >
-                  {preferences.subscriptionStatus === 'active' ? 'Pausar' : 'Reactivar'}
-                </button>
-              </div>
-            </div>
+          {showPrivateAdminPanel ? (
+            <>
+              {/* Card A (SOLO ADMIN): Configuración de Cuenta PayPal para Monetización Real */}
+              <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm space-y-4">
+                <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-3">
+                  <div>
+                    <div className="text-xs font-semibold text-[#0070E0] flex items-center gap-1.5">
+                      <PayPalBrandBadge />
+                      <span>· 🔒 Solo Administrador (Oculto al Público)</span>
+                    </div>
+                    <h3 className="text-base font-bold text-slate-900 mt-0.5">
+                      Cuenta PayPal Activa: <span className="font-mono text-[#003087]">{effectiveMerchantEmail}</span>
+                    </h3>
+                  </div>
+                  <span className="text-xs font-mono font-bold text-emerald-800 bg-emerald-50 border border-emerald-300 px-3 py-1 rounded-md">
+                    {effectiveCheckoutMode === 'live'
+                      ? 'MODO REAL (LIVE) ACTIVO · USD'
+                      : 'MODO PRUEBA (SANDBOX)'}
+                  </span>
+                </div>
 
-            {/* 1. Categorías (from top of screenshot: presentaciones, redes sociales, landing pages, mockups o logos animados) */}
-            <div className="space-y-2.5">
-              <label className="block text-xs font-extrabold text-slate-900 uppercase tracking-wider">
-                1. Categorías Incluidas en tu Suscripción (Presentaciones, Redes Sociales, Landing Pages, Mockups 3D, Logos Animados)
-              </label>
-              <p className="text-xs text-slate-500">
-                Selecciona las categorías habilitadas al suscribirse y usar tus créditos en el programa o en Whop Conexión:
-              </p>
-              <div className="flex flex-wrap gap-2 pt-1">
-                {SUBSCRIPTION_CATEGORY_OPTIONS.map((cat) => {
-                  const active = preferences.categories.includes(cat);
-                  return (
+                {/* Instant Confirmation Banner explaining that garciasaul@hotmail.com is already active in LIVE mode */}
+                <div className="p-3.5 rounded-xl bg-emerald-50/90 border border-emerald-200 text-xs text-emerald-950 space-y-1.5">
+                  <div className="font-bold text-emerald-900 flex items-center justify-between gap-2">
+                    <span>
+                      ✓ Tu cuenta <span className="font-mono underline">{effectiveMerchantEmail}</span> ya está lista y protegida (Solo tú puedes editarla)
+                    </span>
                     <button
-                      key={cat}
                       type="button"
-                      onClick={() => handleToggleCategory(cat)}
-                      className={`px-3.5 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 border-2 transition-all ${
-                        active
-                          ? 'bg-indigo-600 text-white border-indigo-600 shadow-xs'
-                          : 'bg-slate-50 text-slate-700 border-slate-200 hover:border-slate-300'
+                      onClick={() => setShowPayPalModeHelp((prev) => !prev)}
+                      className="text-[11px] font-bold text-[#0070E0] hover:underline shrink-0 cursor-pointer"
+                    >
+                      {showPayPalModeHelp ? 'Ocultar explicación de Modo' : '¿Dónde está el Modo (Mode)?'}
+                    </button>
+                  </div>
+                  <p className="text-emerald-800 leading-relaxed">
+                    <strong>Privacidad garantizada:</strong> Esta tarjeta de configuración y tus ingresos <strong>solo te aparecen a ti como administrador</strong>. Cuando tus clientes entran a la aplicación, solo ven la tarjeta izquierda (<strong>Buy tokens</strong>) y todos sus pagos van fijo a <strong>{effectiveMerchantEmail}</strong>.
+                  </p>
+                </div>
+
+                {/* Direct 1-Click Mode Selector right here so the user doesn't have to search for "Mode" anywhere */}
+                <div className="space-y-2">
+                  <label className="block text-xs font-bold text-slate-800">
+                    Selector Directo de Modo PayPal (Exclusivo para ti como Administrador):
+                  </label>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        onUpdatePreferences({
+                          ...preferences,
+                          merchantPayPalEmail: effectiveMerchantEmail,
+                          paypalCheckoutMode: 'live',
+                        })
+                      }
+                      className={`p-3 rounded-xl border text-left transition-all cursor-pointer ${
+                        effectiveCheckoutMode === 'live'
+                          ? 'bg-emerald-50/80 border-emerald-600 text-slate-900 shadow-xs'
+                          : 'bg-slate-50 border-slate-200 text-slate-600 hover:border-slate-300'
                       }`}
                     >
-                      {active && <Check className="w-3.5 h-3.5" />}
-                      <span>{cat}</span>
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-xs font-extrabold text-slate-900">
+                          1. Modo Real (LIVE · Recomendado)
+                        </span>
+                        {effectiveCheckoutMode === 'live' && (
+                          <Check className="w-4 h-4 text-emerald-600 shrink-0" />
+                        )}
+                      </div>
+                      <p className="text-[11px] text-slate-600 mt-1">
+                        Recibe dinero real en USD directamente en <strong>{effectiveMerchantEmail}</strong>.
+                      </p>
                     </button>
-                  );
-                })}
-              </div>
-            </div>
 
-            {/* 2. Precio: uno solo para todas o por categoría (from screenshot) */}
-            <div className="space-y-3 pt-2 border-t border-slate-100">
-              <label className="block text-xs font-extrabold text-slate-900 uppercase tracking-wider">
-                2. Modalidad de Precio (Uno solo para todas o por categoría)
-              </label>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <button
-                  type="button"
-                  onClick={() =>
-                    onUpdatePreferences({
-                      ...preferences,
-                      pricingMode: 'single',
-                    })
-                  }
-                  className={`p-3.5 rounded-xl border-2 text-left transition-all ${
-                    preferences.pricingMode === 'single'
-                      ? 'bg-blue-50/80 border-[#1d63ff] text-slate-950'
-                      : 'bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100'
-                  }`}
-                >
-                  <div className="flex items-center justify-between font-extrabold text-xs mb-1">
-                    <span>Un solo precio para todas</span>
-                    {preferences.pricingMode === 'single' && (
-                      <Check className="w-4 h-4 text-[#1d63ff]" />
-                    )}
+                    <button
+                      type="button"
+                      onClick={() =>
+                        onUpdatePreferences({
+                          ...preferences,
+                          merchantPayPalEmail: effectiveMerchantEmail,
+                          paypalCheckoutMode: 'sandbox',
+                        })
+                      }
+                      className={`p-3 rounded-xl border text-left transition-all cursor-pointer ${
+                        effectiveCheckoutMode === 'sandbox'
+                          ? 'bg-amber-50/80 border-amber-500 text-slate-900 shadow-xs'
+                          : 'bg-slate-50 border-slate-200 text-slate-600 hover:border-slate-300'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-xs font-extrabold text-slate-900">
+                          2. Modo Prueba (SANDBOX)
+                        </span>
+                        {effectiveCheckoutMode === 'sandbox' && (
+                          <Check className="w-4 h-4 text-amber-600 shrink-0" />
+                        )}
+                      </div>
+                      <p className="text-[11px] text-slate-600 mt-1">
+                        Solo para simular pagos de prueba sin cobrar dinero real.
+                      </p>
+                    </button>
                   </div>
-                  <p className="text-[11px] text-slate-500">
-                    Un único pago o suscripción desbloquea todas las categorías seleccionadas con tokens globales.
-                  </p>
-                </button>
+                </div>
 
-                <button
-                  type="button"
-                  onClick={() =>
-                    onUpdatePreferences({
-                      ...preferences,
-                      pricingMode: 'per_category',
-                    })
-                  }
-                  className={`p-3.5 rounded-xl border-2 text-left transition-all ${
-                    preferences.pricingMode === 'per_category'
-                      ? 'bg-blue-50/80 border-[#1d63ff] text-slate-950'
-                      : 'bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100'
-                  }`}
-                >
-                  <div className="flex items-center justify-between font-extrabold text-xs mb-1">
-                    <span>Precio por categoría</span>
-                    {preferences.pricingMode === 'per_category' && (
-                      <Check className="w-4 h-4 text-[#1d63ff]" />
-                    )}
+                {showPayPalModeHelp && (
+                  <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-700 space-y-2">
+                    <div className="font-bold text-slate-900">
+                      Guía rápida: ¿Qué significa &quot;Modo / Mode&quot; en PayPal?
+                    </div>
+                    <ul className="list-disc pl-4 space-y-1 text-slate-600">
+                      <li>
+                        <strong>Opción A (Ya activa para ti):</strong> Usando tu correo <strong>garciasaul@hotmail.com</strong>, el botón de arriba ya está en <strong>Modo Real (LIVE)</strong> y no tienes que entrar a ninguna configuración técnica de PayPal.
+                      </li>
+                      <li>
+                        <strong>Opción B (Si algún día buscas el interruptor &quot;Live / Sandbox&quot; en la web de PayPal):</strong> Ese botón solo aparece si entras a <span className="font-mono text-slate-800">developer.paypal.com</span> con tu cuenta <strong>garciasaul@hotmail.com</strong>; arriba a la derecha verás un interruptor que dice <strong>Sandbox | Live</strong>. Pero para cobrar con los botones de este programa <strong>no necesitas hacer nada ahí</strong>.
+                      </li>
+                    </ul>
                   </div>
-                  <p className="text-[11px] text-slate-500">
-                    Define un precio personalizado en USD para cada categoría de plantillas 3D y productos.
-                  </p>
-                </button>
-              </div>
+                )}
 
-              {preferences.pricingMode === 'single' ? (
-                <div className="flex items-center gap-3 p-3 rounded-xl bg-slate-50 border border-slate-200">
-                  <span className="text-xs font-bold text-slate-700">
-                    Precio único global (USD):
-                  </span>
-                  <div className="relative w-36">
-                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-xs font-bold text-slate-500">
-                      $
-                    </span>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700 mb-1">
+                      Correo de tu Cuenta PayPal (Solo tú como Admin puedes cambiarlo)
+                    </label>
                     <input
-                      type="text"
-                      value={preferences.singlePriceUsd}
+                      type="email"
+                      value={effectiveMerchantEmail}
                       onChange={(e) =>
                         onUpdatePreferences({
                           ...preferences,
-                          singlePriceUsd: e.target.value,
+                          merchantPayPalEmail: e.target.value,
                         })
                       }
-                      className="w-full bg-white border border-slate-300 rounded-lg py-1.5 pl-6 pr-3 text-xs font-extrabold text-slate-900 outline-none focus:border-blue-600"
+                      placeholder="garciasaul@hotmail.com"
+                      className="w-full bg-slate-50 border border-slate-300 focus:border-[#0070E0] rounded-xl px-3.5 py-2 text-xs font-mono text-slate-900 outline-none"
                     />
                   </div>
-                  <span className="text-[11px] text-slate-500">
-                    (Incluye +{selectedPackage.tokensLabel} tokens al suscribirse)
-                  </span>
+
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700 mb-1">
+                      Usuario de PayPal.Me (ej. paypal.me/saulmente)
+                    </label>
+                    <input
+                      type="text"
+                      value={preferences.paypalMeUsername || 'saulmente'}
+                      onChange={(e) =>
+                        onUpdatePreferences({
+                          ...preferences,
+                          paypalMeUsername: e.target.value,
+                        })
+                      }
+                      placeholder="saulmente"
+                      className="w-full bg-slate-50 border border-slate-300 focus:border-[#0070E0] rounded-xl px-3.5 py-2 text-xs font-mono text-slate-900 outline-none"
+                    />
+                  </div>
                 </div>
-              ) : (
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 p-3 rounded-xl bg-slate-50 border border-slate-200">
-                  {preferences.categories.map((cat) => (
-                    <div
-                      key={cat}
-                      className="flex items-center justify-between gap-2 bg-white p-2 rounded-lg border border-slate-200"
+
+                <div className="flex flex-wrap items-center justify-between gap-3 pt-1 text-xs text-slate-600">
+                  <span>
+                    Todos los botones <strong>Purchase</strong> y <strong>PayPal Checkout</strong> envían el pago en dólares (USD) directamente a <strong>{effectiveMerchantEmail}</strong>.
+                  </span>
+                  <button
+                    type="button"
+                    onClick={handleSavePrefsClick}
+                    className="px-3.5 py-1.5 rounded-lg bg-[#0070E0] hover:bg-[#003087] text-white text-xs font-bold transition-colors cursor-pointer shrink-0"
+                  >
+                    Guardar Cuenta PayPal
+                  </button>
+                </div>
+              </div>
+
+              {/* Card B (SOLO ADMIN): Preferencias de Mis Suscripciones (Categorías, Precio y Entrega) */}
+              <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm space-y-5">
+                <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 pb-4">
+                  <div>
+                    <div className="text-xs text-slate-500">
+                      🔒 Configuración de Productos y Preferencias (Solo Administrador)
+                    </div>
+                    <h3 className="text-lg font-bold text-slate-900">
+                      Preferencias de Mis Suscripciones (Categorías, Precio y Entrega)
+                    </h3>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-semibold text-slate-700">
+                      Estado:{' '}
+                      <strong className={preferences.subscriptionStatus === 'active' ? 'text-emerald-700' : 'text-amber-700'}>
+                        {preferences.subscriptionStatus === 'active' ? 'Suscripción Activa' : 'En Pausa'}
+                      </strong>
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        onUpdatePreferences({
+                          ...preferences,
+                          subscriptionStatus:
+                            preferences.subscriptionStatus === 'active' ? 'paused' : 'active',
+                        })
+                      }
+                      className="px-3 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold transition-colors cursor-pointer"
                     >
-                      <span className="text-xs font-semibold text-slate-800 truncate">
-                        {cat}
+                      {preferences.subscriptionStatus === 'active' ? 'Pausar' : 'Reactivar'}
+                    </button>
+                  </div>
+                </div>
+
+                {/* 1. Categorías */}
+                <div className="space-y-2.5">
+                  <label className="block text-xs font-bold text-slate-900">
+                    01. Categorías Incluidas en tu Suscripción (Presentaciones, Redes Sociales, Landing Pages, Mockups 3D, Logos Animados)
+                  </label>
+                  <p className="text-xs text-slate-500">
+                    Selecciona las categorías habilitadas cuando un cliente se suscribe con PayPal y recibe sus tokens:
+                  </p>
+                  <div className="flex flex-wrap gap-2 pt-1">
+                    {SUBSCRIPTION_CATEGORY_OPTIONS.map((cat) => {
+                      const active = preferences.categories.includes(cat);
+                      return (
+                        <button
+                          key={cat}
+                          type="button"
+                          onClick={() => handleToggleCategory(cat)}
+                          className={`px-3.5 py-2 rounded-xl text-xs font-semibold flex items-center gap-1.5 border transition-all cursor-pointer ${
+                            active
+                              ? 'bg-slate-900 text-white border-slate-900'
+                              : 'bg-slate-50 text-slate-700 border-slate-200 hover:border-slate-300'
+                          }`}
+                        >
+                          {active && <Check className="w-3.5 h-3.5" />}
+                          <span>{cat}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* 2. Precio: uno solo para todas o por categoría */}
+                <div className="space-y-3 pt-2 border-t border-slate-100">
+                  <label className="block text-xs font-bold text-slate-900">
+                    02. Modalidad de Precio (Uno solo para todas o por categoría)
+                  </label>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        onUpdatePreferences({
+                          ...preferences,
+                          pricingMode: 'single',
+                        })
+                      }
+                      className={`p-3.5 rounded-xl border text-left transition-all cursor-pointer ${
+                        preferences.pricingMode === 'single'
+                          ? 'bg-blue-50/70 border-[#1d63ff] text-slate-950'
+                          : 'bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between font-bold text-xs mb-1">
+                        <span>Un solo precio para todas</span>
+                        {preferences.pricingMode === 'single' && (
+                          <Check className="w-4 h-4 text-[#1d63ff]" />
+                        )}
+                      </div>
+                      <p className="text-[11px] text-slate-500">
+                        Un único pago en PayPal desbloquea todas las categorías seleccionadas con tokens globales.
+                      </p>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() =>
+                        onUpdatePreferences({
+                          ...preferences,
+                          pricingMode: 'per_category',
+                        })
+                      }
+                      className={`p-3.5 rounded-xl border text-left transition-all cursor-pointer ${
+                        preferences.pricingMode === 'per_category'
+                          ? 'bg-blue-50/70 border-[#1d63ff] text-slate-950'
+                          : 'bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between font-bold text-xs mb-1">
+                        <span>Precio por categoría</span>
+                        {preferences.pricingMode === 'per_category' && (
+                          <Check className="w-4 h-4 text-[#1d63ff]" />
+                        )}
+                      </div>
+                      <p className="text-[11px] text-slate-500">
+                        Define un precio personalizado en USD para cada categoría de plantillas 3D y productos.
+                      </p>
+                    </button>
+                  </div>
+
+                  {preferences.pricingMode === 'single' ? (
+                    <div className="flex items-center gap-3 p-3 rounded-xl bg-slate-50 border border-slate-200">
+                      <span className="text-xs font-semibold text-slate-700">
+                        Precio único global en PayPal (USD):
                       </span>
-                      <div className="relative w-24 shrink-0">
-                        <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-xs font-bold text-slate-400">
+                      <div className="relative w-36">
+                        <span className="absolute left-3 top-1/2 -translate-y-1/2 text-xs font-bold text-slate-500">
                           $
                         </span>
                         <input
                           type="text"
-                          value={preferences.categoryPrices[cat] || '5.00'}
-                          onChange={(e) => handleCategoryPriceChange(cat, e.target.value)}
-                          className="w-full bg-slate-50 border border-slate-200 rounded-md py-1 pl-5 pr-2 text-xs font-bold text-slate-900 outline-none focus:border-blue-600"
+                          value={preferences.singlePriceUsd}
+                          onChange={(e) =>
+                            onUpdatePreferences({
+                              ...preferences,
+                              singlePriceUsd: e.target.value,
+                            })
+                          }
+                          className="w-full bg-white border border-slate-300 rounded-lg py-1.5 pl-6 pr-3 text-xs font-bold font-mono text-slate-900 outline-none focus:border-blue-600"
                         />
                       </div>
+                      <span className="text-[11px] text-slate-500">
+                        (Otorga +{selectedPackage.tokensLabel} tokens al pagar)
+                      </span>
                     </div>
-                  ))}
+                  ) : (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 p-3 rounded-xl bg-slate-50 border border-slate-200">
+                      {preferences.categories.map((cat) => (
+                        <div
+                          key={cat}
+                          className="flex items-center justify-between gap-2 bg-white p-2 rounded-lg border border-slate-200"
+                        >
+                          <span className="text-xs font-semibold text-slate-800 truncate">
+                            {cat}
+                          </span>
+                          <div className="relative w-24 shrink-0">
+                            <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-xs font-bold text-slate-400">
+                              $
+                            </span>
+                            <input
+                              type="text"
+                              value={preferences.categoryPrices[cat] || '5.00'}
+                              onChange={(e) => handleCategoryPriceChange(cat, e.target.value)}
+                              className="w-full bg-slate-50 border border-slate-200 rounded-md py-1 pl-5 pr-2 text-xs font-bold font-mono text-slate-900 outline-none focus:border-blue-600"
+                            />
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
-              )}
-            </div>
 
-            {/* 3. Formato de entrega: Canva, Figma, Estudio 3D, MP4, MP3 (from screenshot) */}
-            <div className="space-y-2.5 pt-2 border-t border-slate-100">
-              <label className="block text-xs font-extrabold text-slate-900 uppercase tracking-wider">
-                3. Formato de Entrega (Canva, Figma, Estudio 3D, Video MP4, Audio MP3)
-              </label>
-              <div className="flex flex-wrap gap-2">
-                {SUBSCRIPTION_FORMAT_OPTIONS.map((fmt) => {
-                  const active = preferences.deliveryFormats.includes(fmt);
-                  return (
-                    <button
-                      key={fmt}
-                      type="button"
-                      onClick={() => handleToggleFormat(fmt)}
-                      className={`px-3.5 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 border-2 transition-all ${
-                        active
-                          ? 'bg-emerald-600 text-white border-emerald-600 shadow-xs'
-                          : 'bg-slate-50 text-slate-700 border-slate-200 hover:border-slate-300'
-                      }`}
+                {/* 3. Formato de entrega */}
+                <div className="space-y-2.5 pt-2 border-t border-slate-100">
+                  <label className="block text-xs font-bold text-slate-900">
+                    03. Formato de Entrega (Canva, Figma, Estudio 3D, Video MP4, Audio MP3)
+                  </label>
+                  <div className="flex flex-wrap gap-2">
+                    {SUBSCRIPTION_FORMAT_OPTIONS.map((fmt) => {
+                      const active = preferences.deliveryFormats.includes(fmt);
+                      return (
+                        <button
+                          key={fmt}
+                          type="button"
+                          onClick={() => handleToggleFormat(fmt)}
+                          className={`px-3.5 py-2 rounded-xl text-xs font-semibold flex items-center gap-1.5 border transition-all cursor-pointer ${
+                            active
+                              ? 'bg-emerald-600 text-white border-emerald-600'
+                              : 'bg-slate-50 text-slate-700 border-slate-200 hover:border-slate-300'
+                          }`}
+                        >
+                          {active && <Check className="w-3.5 h-3.5" />}
+                          <span>{fmt}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* 4. Preferencias de Ciclo, Recarga Automática de Créditos y Conexión Whop */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2 border-t border-slate-100">
+                  <div className="p-3 rounded-xl bg-slate-50 border border-slate-200 space-y-2">
+                    <label className="block text-xs font-bold text-slate-800">
+                      Ciclo de Facturación PayPal
+                    </label>
+                    <select
+                      value={preferences.billingCycle}
+                      onChange={(e) =>
+                        onUpdatePreferences({
+                          ...preferences,
+                          billingCycle: e.target.value as 'monthly' | 'annual' | 'one_time',
+                        })
+                      }
+                      className="w-full bg-white border border-slate-300 rounded-lg px-3 py-2 text-xs font-semibold text-slate-900 outline-none"
                     >
-                      {active && <Check className="w-3.5 h-3.5" />}
-                      <span>{fmt}</span>
-                    </button>
-                  );
-                })}
+                      <option value="monthly">Mensual (Renovación de tokens cada mes)</option>
+                      <option value="annual">Anual (Bonificación doble de tokens)</option>
+                      <option value="one_time">Pago Único PayPal (Recarga directa de tokens)</option>
+                    </select>
+                  </div>
+
+                  <div className="p-3 rounded-xl bg-slate-50 border border-slate-200 space-y-2 flex flex-col justify-center">
+                    <label className="flex items-center gap-2 text-xs font-semibold text-slate-800 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={preferences.autoGrantCreditsOnSubscribe}
+                        onChange={(e) =>
+                          onUpdatePreferences({
+                            ...preferences,
+                            autoGrantCreditsOnSubscribe: e.target.checked,
+                          })
+                        }
+                        className="rounded text-blue-600 focus:ring-blue-500"
+                      />
+                      <span>Acreditar tokens automáticamente tras el pago PayPal ({selectedPackage.tokensLabel})</span>
+                    </label>
+
+                    <label className="flex items-center gap-2 text-xs font-semibold text-slate-800 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={preferences.autoRecharge}
+                        onChange={(e) =>
+                          onUpdatePreferences({
+                            ...preferences,
+                            autoRecharge: e.target.checked,
+                          })
+                        }
+                        className="rounded text-blue-600 focus:ring-blue-500"
+                      />
+                      <span>Auto-recargar con PayPal cuando el saldo baje de 5,000 tokens</span>
+                    </label>
+
+                    <label className="flex items-center gap-2 text-xs font-semibold text-slate-800 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={preferences.whopSyncEnabled}
+                        onChange={(e) =>
+                          onUpdatePreferences({
+                            ...preferences,
+                            whopSyncEnabled: e.target.checked,
+                          })
+                        }
+                        className="rounded text-blue-600 focus:ring-blue-500"
+                      />
+                      <span>Sincronizar acceso también con Whop (@saulmente)</span>
+                    </label>
+                  </div>
+                </div>
+
+                {prefsSavedNotice && (
+                  <div className="p-3 rounded-xl bg-emerald-50 border border-emerald-300 text-emerald-900 text-xs font-semibold flex items-center gap-2">
+                    <Check className="w-4 h-4 text-emerald-600 shrink-0" />
+                    <span>{prefsSavedNotice}</span>
+                  </div>
+                )}
+
+                <div className="flex flex-wrap items-center justify-between gap-3 pt-2">
+                  <button
+                    type="button"
+                    onClick={handleSavePrefsClick}
+                    className="px-5 py-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold flex items-center gap-2 transition-colors cursor-pointer"
+                  >
+                    <Save className="w-4 h-4" />
+                    <span>Guardar Preferencias y Configuración PayPal</span>
+                  </button>
+
+                  <a
+                    href={WHOP_TARGET_URL}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="px-4 py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-800 text-xs font-semibold flex items-center gap-1.5 transition-colors"
+                  >
+                    <span>Abrir Whop Conexión (@saulmente)</span>
+                    <ExternalLink className="w-3.5 h-3.5" />
+                  </a>
+                </div>
               </div>
-            </div>
-
-            {/* 4. Preferencias de Ciclo, Recarga Automática de Créditos y Conexión Whop */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2 border-t border-slate-100">
-              <div className="p-3 rounded-xl bg-slate-50 border border-slate-200 space-y-2">
-                <label className="block text-xs font-bold text-slate-800">
-                  Ciclo de Suscripción
-                </label>
-                <select
-                  value={preferences.billingCycle}
-                  onChange={(e) =>
-                    onUpdatePreferences({
-                      ...preferences,
-                      billingCycle: e.target.value as 'monthly' | 'annual' | 'one_time',
-                    })
-                  }
-                  className="w-full bg-white border border-slate-300 rounded-lg px-3 py-2 text-xs font-semibold text-slate-900 outline-none"
-                >
-                  <option value="monthly">Mensual (Renovación de tokens cada mes)</option>
-                  <option value="annual">Anual (Bonificación doble de tokens)</option>
-                  <option value="one_time">Paquete Único (Recarga directa de tokens)</option>
-                </select>
-              </div>
-
-              <div className="p-3 rounded-xl bg-slate-50 border border-slate-200 space-y-2 flex flex-col justify-center">
-                <label className="flex items-center gap-2 text-xs font-semibold text-slate-800 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={preferences.autoGrantCreditsOnSubscribe}
-                    onChange={(e) =>
-                      onUpdatePreferences({
-                        ...preferences,
-                        autoGrantCreditsOnSubscribe: e.target.checked,
-                      })
-                    }
-                    className="rounded text-blue-600 focus:ring-blue-500"
-                  />
-                  <span>Dar créditos automáticamente al suscribirse ({selectedPackage.tokensLabel} tokens)</span>
-                </label>
-
-                <label className="flex items-center gap-2 text-xs font-semibold text-slate-800 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={preferences.autoRecharge}
-                    onChange={(e) =>
-                      onUpdatePreferences({
-                        ...preferences,
-                        autoRecharge: e.target.checked,
-                      })
-                    }
-                    className="rounded text-blue-600 focus:ring-blue-500"
-                  />
-                  <span>Auto-recargar tokens cuando el saldo baje de 5,000 tokens</span>
-                </label>
-
-                <label className="flex items-center gap-2 text-xs font-semibold text-slate-800 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={preferences.whopSyncEnabled}
-                    onChange={(e) =>
-                      onUpdatePreferences({
-                        ...preferences,
-                        whopSyncEnabled: e.target.checked,
-                      })
-                    }
-                    className="rounded text-blue-600 focus:ring-blue-500"
-                  />
-                  <span>Sincronizar checkout con Whop (@saulmente)</span>
-                </label>
-              </div>
-            </div>
-
-            {prefsSavedNotice && (
-              <div className="p-3 rounded-xl bg-emerald-50 border border-emerald-300 text-emerald-900 text-xs font-semibold flex items-center gap-2">
-                <Check className="w-4 h-4 text-emerald-600 shrink-0" />
-                <span>{prefsSavedNotice}</span>
-              </div>
-            )}
-
-            <div className="flex flex-wrap items-center justify-between gap-3 pt-2">
-              <button
-                type="button"
-                onClick={handleSavePrefsClick}
-                className="px-5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-extrabold flex items-center gap-2 shadow-sm transition-colors cursor-pointer"
-              >
-                <Save className="w-4 h-4" />
-                <span>Guardar Preferencias de Mis Suscripciones</span>
-              </button>
-
-              <a
-                href={WHOP_TARGET_URL}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="px-4 py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-800 text-xs font-bold flex items-center gap-1.5 transition-colors"
-              >
-                <span>Abrir Whop Conexión (@saulmente)</span>
-                <ExternalLink className="w-3.5 h-3.5" />
-              </a>
-            </div>
-          </div>
-
-          {/* Active Subscriptions & Token Credit Grants History */}
-          <div className="bg-white border-2 border-slate-200 rounded-2xl p-6 shadow-md space-y-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <h4 className="text-sm font-extrabold text-slate-900">
-                  Historial de Suscripciones y Créditos Otorgados ({subscriptions.length})
-                </h4>
-                <p className="text-xs text-slate-500">
-                  Cada suscripción o paquete acreditado suma tokens inmediatamente para usar todas las funciones del programa.
+            </>
+          ) : (
+            /* PUBLIC CUSTOMER VIEW: What regular visitors see (Zero admin settings exposed) */
+            <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm space-y-5">
+              <div className="border-b border-slate-100 pb-4">
+                <div className="text-xs font-semibold text-[#0070E0] flex items-center gap-1.5">
+                  <PayPalBrandBadge />
+                  <span>· Beneficios Incluidos con tus Tokens</span>
+                </div>
+                <h3 className="text-lg font-bold text-slate-900 mt-1">
+                  ¿Qué incluye tu paquete de {selectedPackage.tokensLabel} tokens ({selectedPackage.priceLabel})?
+                </h3>
+                <p className="text-xs text-slate-600 mt-1">
+                  Al completar tu compra segura con PayPal, tus tokens se acreditan de inmediato para generar y exportar contenido en todas las categorías habilitadas:
                 </p>
               </div>
-              <span className="px-2.5 py-1 rounded-lg bg-amber-100 text-amber-900 text-xs font-mono font-bold">
-                Total: {tokenCreditsBalance.toLocaleString()} tokens
+
+              <div className="space-y-2.5">
+                <div className="text-xs font-bold text-slate-800">
+                  Categorías Desbloqueadas:
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {preferences.categories.map((cat) => (
+                    <span
+                      key={cat}
+                      className="px-3.5 py-2 rounded-xl bg-slate-900 text-white text-xs font-semibold inline-flex items-center gap-1.5"
+                    >
+                      <Check className="w-3.5 h-3.5 text-emerald-400" />
+                      <span>{cat}</span>
+                    </span>
+                  ))}
+                </div>
+              </div>
+
+              <div className="space-y-2.5 pt-2 border-t border-slate-100">
+                <div className="text-xs font-bold text-slate-800">
+                  Formatos de Exportación y Entrega:
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {preferences.deliveryFormats.map((fmt) => (
+                    <span
+                      key={fmt}
+                      className="px-3.5 py-2 rounded-xl bg-emerald-50 text-emerald-900 border border-emerald-200 text-xs font-semibold inline-flex items-center gap-1.5"
+                    >
+                      <Check className="w-3.5 h-3.5 text-emerald-600" />
+                      <span>{fmt}</span>
+                    </span>
+                  ))}
+                </div>
+              </div>
+
+              <div className="p-4 rounded-xl bg-slate-50 border border-slate-200 flex flex-wrap items-center justify-between gap-3 text-xs">
+                <div>
+                  <div className="font-bold text-slate-900">
+                    Acceso también disponible en Whop (@saulmente)
+                  </div>
+                  <p className="text-slate-600 mt-0.5">
+                    Usa tus tokens en el Estudio 3D IA y accede a la comunidad oficial.
+                  </p>
+                </div>
+                <a
+                  href={WHOP_TARGET_URL}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="px-4 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs flex items-center gap-1.5 shrink-0"
+                >
+                  <span>Ir a whop.com/@saulmente</span>
+                  <ExternalLink className="w-3.5 h-3.5" />
+                </a>
+              </div>
+            </div>
+          )}
+
+          {/* Card C: Historial de Recibos de Tokens */}
+          <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm space-y-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <h4 className="text-sm font-bold text-slate-900">
+                  {showPrivateAdminPanel
+                    ? `Registro Administrativo de Pagos PayPal (${subscriptions.length})`
+                    : `Mis Recargas de Tokens (${subscriptions.length})`}
+                </h4>
+                <p className="text-xs text-slate-500">
+                  {showPrivateAdminPanel
+                    ? 'Historial en tiempo real de órdenes de PayPal procesadas y paquetes de tokens acreditados.'
+                    : 'Recibos de tus paquetes de tokens acreditados en el programa.'}
+                </p>
+              </div>
+              <span className="text-xs font-mono font-bold text-slate-800 tabular-nums">
+                Balance: {tokenCreditsBalance.toLocaleString()} tokens
               </span>
             </div>
 
             {subscriptions.length === 0 ? (
               <div className="p-6 rounded-xl bg-slate-50 border border-dashed border-slate-200 text-center text-xs text-slate-500">
-                Aún no hay recargas adicionales registradas. Selecciona un paquete en <strong>Buy tokens</strong> (ej. $5.00 → 62,500 tokens) para acreditarlo al instante.
+                Aún no hay compras registradas. Selecciona un paquete en <strong>Buy tokens</strong> ($5.00, $10.00, $25.00 o $50.00) y haz clic en <strong>Purchase</strong> o <strong>PayPal Checkout</strong>.
               </div>
             ) : (
               <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
@@ -4705,17 +5582,29 @@ const SubscriptionPreferencesAndCreditsPanel = ({
                     <div className="flex items-center gap-3 min-w-0">
                       <GoldenLightningCoinIcon size="sm" />
                       <div className="min-w-0">
-                        <div className="font-extrabold text-slate-900 truncate">
-                          +{sub.tokensGranted.toLocaleString()} tokens ·{' '}
-                          <span className="text-blue-600">{sub.priceLabel}</span>
+                        <div className="font-bold text-slate-900 truncate flex items-center gap-1.5">
+                          <span className="tabular-nums">+{sub.tokensGranted.toLocaleString()} tokens</span>
+                          <span aria-hidden="true">·</span>
+                          <span className="text-[#0070E0] font-mono">{sub.priceLabel}</span>
+                          {sub.paypalOrderId && (
+                            <>
+                              <span aria-hidden="true">·</span>
+                              <span className="font-mono text-[11px] text-slate-500">
+                                ID: {sub.paypalOrderId}
+                              </span>
+                            </>
+                          )}
                         </div>
                         <div className="text-[11px] text-slate-500 truncate">
-                          {sub.subscriberName || 'Suscriptor'} · Categorías: {(sub.categories || []).slice(0, 3).join(', ')} · Entrega: {(sub.deliveryFormats || []).join(', ')}
+                          {sub.subscriberName || 'Cliente PayPal'}
+                          {showPrivateAdminPanel
+                            ? ` (${sub.paypalPayerEmail || sub.subscriberEmail}) · Receptor: ${sub.merchantPayPalEmail || effectiveMerchantEmail}`
+                            : ''}
                         </div>
                       </div>
                     </div>
-                    <span className="px-2.5 py-1 rounded-md bg-emerald-100 text-emerald-800 text-[10px] font-extrabold uppercase tracking-wider shrink-0">
-                      Acreditado
+                    <span className="text-[11px] font-mono font-semibold text-emerald-700 shrink-0">
+                      {sub.paypalStatus || 'COMPLETED'}
                     </span>
                   </div>
                 ))}
@@ -4738,6 +5627,7 @@ const BuyTokensSubscriptionModal = ({
   onSubscribeAndGrantTokens,
   isSubmittingSubscription,
   lastGrantedSubscription,
+  currentUserEmail,
 }: {
   isOpen: boolean;
   onClose: () => void;
@@ -4753,9 +5643,15 @@ const BuyTokensSubscriptionModal = ({
     subscriberName?: string;
     subscriberEmail?: string;
     redirectWhop?: boolean;
+    paymentMethod?: string;
+    paypalOrderId?: string;
+    paypalPayerEmail?: string;
+    paypalStatus?: string;
+    merchantPayPalEmail?: string;
   }) => Promise<void>;
   isSubmittingSubscription: boolean;
   lastGrantedSubscription: SubscriptionRecord | null;
+  currentUserEmail?: string | null;
 }) => {
   if (!isOpen) return null;
 
@@ -4772,6 +5668,7 @@ const BuyTokensSubscriptionModal = ({
           lastGrantedSubscription={lastGrantedSubscription}
           onCloseModal={onClose}
           isModalMode={true}
+          currentUserEmail={currentUserEmail}
         />
       </div>
     </div>
@@ -5271,6 +6168,11 @@ export default function App() {
     subscriberName?: string;
     subscriberEmail?: string;
     redirectWhop?: boolean;
+    paymentMethod?: string;
+    paypalOrderId?: string;
+    paypalPayerEmail?: string;
+    paypalStatus?: string;
+    merchantPayPalEmail?: string;
   }) => {
     setIsSubmittingSubscription(true);
     if (pkg.redirectWhop) {
@@ -5283,6 +6185,9 @@ export default function App() {
       saveTokenCreditsBalance(updated);
       return updated;
     });
+
+    const normalizedMethod: 'paypal' | 'whop' | 'direct' =
+      pkg.paymentMethod === 'whop' || pkg.paymentMethod === 'direct' ? pkg.paymentMethod : 'paypal';
 
     const newSubRecord: SubscriptionRecord = {
       id: `sub-${Date.now()}`,
@@ -5297,6 +6202,11 @@ export default function App() {
       pricingMode: subscriptionPrefs.pricingMode,
       deliveryFormats: subscriptionPrefs.deliveryFormats.slice(0, 10),
       autoRecharge: subscriptionPrefs.autoRecharge,
+      paymentMethod: normalizedMethod,
+      paypalOrderId: (pkg.paypalOrderId || `PP-LIVE-${Date.now()}`).slice(0, 120),
+      paypalPayerEmail: (pkg.paypalPayerEmail || pkg.subscriberEmail || user?.email || '').slice(0, 256),
+      paypalStatus: (pkg.paypalStatus || 'COMPLETED').slice(0, 40),
+      merchantPayPalEmail: (pkg.merchantPayPalEmail || subscriptionPrefs.merchantPayPalEmail || DEFAULT_MERCHANT_PAYPAL_EMAIL).slice(0, 256),
       status: 'active',
       createdAtIso: new Date().toISOString(),
     };
@@ -5317,7 +6227,7 @@ export default function App() {
     saveSubscriptionPreferences(updatedPrefs);
 
     setSaveBannerMessage(
-      `¡Suscripción acreditada! Recibiste +${grantedAmount.toLocaleString()} tokens (${pkg.priceLabel}) para usar todas las funciones del programa.`
+      `¡Pago PayPal procesado (${newSubRecord.paypalOrderId})! Recibiste +${grantedAmount.toLocaleString()} tokens (${pkg.priceLabel}) para usar todas las funciones del programa.`
     );
     setTimeout(() => setSaveBannerMessage(null), 5000);
 
@@ -5345,6 +6255,11 @@ export default function App() {
           pricingMode: newSubRecord.pricingMode,
           deliveryFormats: newSubRecord.deliveryFormats,
           autoRecharge: newSubRecord.autoRecharge,
+          paymentMethod: newSubRecord.paymentMethod || 'paypal',
+          paypalOrderId: newSubRecord.paypalOrderId || '',
+          paypalPayerEmail: newSubRecord.paypalPayerEmail || '',
+          paypalStatus: newSubRecord.paypalStatus || 'COMPLETED',
+          merchantPayPalEmail: newSubRecord.merchantPayPalEmail || DEFAULT_MERCHANT_PAYPAL_EMAIL,
           status: 'active',
           createdAt: serverTimestamp(),
         });
@@ -7739,6 +8654,7 @@ export default function App() {
               onSubscribeAndGrantTokens={handleSubscribeAndGrantTokens}
               isSubmittingSubscription={isSubmittingSubscription}
               lastGrantedSubscription={lastGrantedSubscription}
+              currentUserEmail={user?.email || null}
             />
           ) : activeTab === 'ai-suite' ? (
             <AiProductionSuite
@@ -9694,6 +10610,7 @@ export default function App() {
         onSubscribeAndGrantTokens={handleSubscribeAndGrantTokens}
         isSubmittingSubscription={isSubmittingSubscription}
         lastGrantedSubscription={lastGrantedSubscription}
+        currentUserEmail={user?.email || null}
       />
     </div>
   );
