@@ -684,7 +684,144 @@ function saveLocalVideos(list: VideoProject[]) {
 }
 
 export const WHOP_TARGET_URL = 'https://whop.com/@saulmente';
+export const SUBSCRIPTION_REFERENCE_IMAGE_URL = '/assets/aistudio/IMG_4322_803e5739.png';
 const FREE_REGISTRATIONS_STORAGE_KEY = 'reelify_free_registrations_v1';
+const SUBSCRIPTIONS_STORAGE_KEY = 'reelify_subscriptions_v1';
+const SUBSCRIPTION_PREFS_STORAGE_KEY = 'reelify_subscription_prefs_v1';
+const TOKEN_BALANCE_STORAGE_KEY = 'reelify_token_credits_balance_v1';
+
+export interface SubscriptionTokenPackage {
+  id: 'tier-5' | 'tier-10' | 'tier-25' | 'tier-50';
+  priceUsd: number;
+  priceLabel: string;
+  tokens: number;
+  tokensFormatted: string;
+  tokensLabel: string;
+  planName: string;
+  badge?: string;
+}
+
+export const SUBSCRIPTION_TOKEN_PACKAGES: SubscriptionTokenPackage[] = [
+  {
+    id: 'tier-5',
+    priceUsd: 5.0,
+    priceLabel: '$5.00',
+    tokens: 62500,
+    tokensFormatted: '62,500',
+    tokensLabel: '62,500',
+    planName: 'Starter · Suscripción Inicial',
+    badge: 'Popular',
+  },
+  {
+    id: 'tier-10',
+    priceUsd: 10.0,
+    priceLabel: '$10.00',
+    tokens: 125000,
+    tokensFormatted: '125,000',
+    tokensLabel: '125,000',
+    planName: 'Creator · Estudio Pro',
+  },
+  {
+    id: 'tier-25',
+    priceUsd: 25.0,
+    priceLabel: '$25.00',
+    tokens: 312500,
+    tokensFormatted: '312,500',
+    tokensLabel: '312,500',
+    planName: 'Business · Escenarios 3D + IA',
+  },
+  {
+    id: 'tier-50',
+    priceUsd: 50.0,
+    priceLabel: '$50.00',
+    tokens: 625000,
+    tokensFormatted: '625,000',
+    tokensLabel: '625,000',
+    planName: 'Agencia Global · Max Tokens',
+    badge: 'Mejor Valor',
+  },
+];
+
+export const SUBSCRIPTION_CATEGORY_OPTIONS = [
+  'Presentaciones',
+  'Redes Sociales',
+  'Landing Pages',
+  'Mockups 3D',
+  'Logos Animados',
+] as const;
+
+export const SUBSCRIPTION_FORMAT_OPTIONS = [
+  'Canva',
+  'Figma',
+  'Estudio 3D',
+  'Video MP4',
+  'Audio MP3',
+] as const;
+
+export interface UserSubscriptionPreferences {
+  selectedPackageId: string;
+  status: 'active' | 'paused';
+  subscriptionStatus: 'active' | 'paused';
+  billingCycle: 'monthly' | 'annual' | 'one_time';
+  pricingMode: 'single' | 'single_all' | 'per_category';
+  singlePriceUsd: string;
+  categoryPrices: Record<string, string>;
+  categories: string[];
+  deliveryFormats: string[];
+  autoGrantCreditsOnSubscribe: boolean;
+  autoTopUpLowBalance: boolean;
+  autoRecharge: boolean;
+  redirectToWhop: boolean;
+  whopSyncEnabled: boolean;
+  defaultWelcomeTokens: number;
+}
+
+export const DEFAULT_SUBSCRIPTION_PREFERENCES: UserSubscriptionPreferences = {
+  selectedPackageId: 'tier-5',
+  status: 'active',
+  subscriptionStatus: 'active',
+  billingCycle: 'monthly',
+  pricingMode: 'single',
+  singlePriceUsd: '5.00',
+  categoryPrices: {
+    Presentaciones: '5.00',
+    'Redes Sociales': '10.00',
+    'Landing Pages': '25.00',
+    'Mockups 3D': '25.00',
+    'Logos Animados': '10.00',
+  },
+  categories: ['Presentaciones', 'Redes Sociales', 'Landing Pages', 'Mockups 3D', 'Logos Animados'],
+  deliveryFormats: ['Canva', 'Figma', 'Estudio 3D', 'Video MP4', 'Audio MP3'],
+  autoGrantCreditsOnSubscribe: true,
+  autoTopUpLowBalance: true,
+  autoRecharge: true,
+  redirectToWhop: false,
+  whopSyncEnabled: true,
+  defaultWelcomeTokens: 62500,
+};
+
+export interface SubscriptionRecord {
+  id: string;
+  userId: string;
+  subscriberName: string;
+  subscriberEmail: string;
+  packageId: string;
+  priceUsd: number;
+  priceLabel: string;
+  tokensGranted: number;
+  status: 'active' | 'paused';
+  billingCycle?: 'monthly' | 'annual' | 'one_time';
+  pricingMode: 'single' | 'single_all' | 'per_category';
+  categories: string[];
+  deliveryFormats: string[];
+  autoGrantCreditsOnSubscribe?: boolean;
+  autoTopUpLowBalance?: boolean;
+  autoRecharge?: boolean;
+  redirectToWhop?: boolean;
+  targetUrl?: string;
+  createdAt?: any;
+  createdAtIso?: string;
+}
 
 export interface FreeBusinessRegistration {
   id: string;
@@ -694,6 +831,8 @@ export interface FreeBusinessRegistration {
   businessName: string;
   phone?: string;
   planType: string;
+  tokensGranted?: number;
+  priceLabel?: string;
   targetUrl: string;
   createdAt?: any;
   createdAtIso?: string;
@@ -713,6 +852,75 @@ function loadLocalRegistrations(): FreeBusinessRegistration[] {
 function saveLocalRegistrations(list: FreeBusinessRegistration[]) {
   try {
     localStorage.setItem(FREE_REGISTRATIONS_STORAGE_KEY, JSON.stringify(list.slice(0, 100)));
+  } catch {
+    // ignore
+  }
+}
+
+function loadSubscriptionPreferences(): UserSubscriptionPreferences {
+  try {
+    const raw = localStorage.getItem(SUBSCRIPTION_PREFS_STORAGE_KEY);
+    if (!raw) return DEFAULT_SUBSCRIPTION_PREFERENCES;
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === 'object') {
+      return {
+        ...DEFAULT_SUBSCRIPTION_PREFERENCES,
+        ...parsed,
+        categories: Array.isArray(parsed.categories)
+          ? parsed.categories
+          : DEFAULT_SUBSCRIPTION_PREFERENCES.categories,
+        deliveryFormats: Array.isArray(parsed.deliveryFormats)
+          ? parsed.deliveryFormats
+          : DEFAULT_SUBSCRIPTION_PREFERENCES.deliveryFormats,
+      };
+    }
+    return DEFAULT_SUBSCRIPTION_PREFERENCES;
+  } catch {
+    return DEFAULT_SUBSCRIPTION_PREFERENCES;
+  }
+}
+
+function saveSubscriptionPreferences(prefs: UserSubscriptionPreferences) {
+  try {
+    localStorage.setItem(SUBSCRIPTION_PREFS_STORAGE_KEY, JSON.stringify(prefs));
+  } catch {
+    // ignore
+  }
+}
+
+function loadLocalSubscriptions(): SubscriptionRecord[] {
+  try {
+    const raw = localStorage.getItem(SUBSCRIPTIONS_STORAGE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveLocalSubscriptions(list: SubscriptionRecord[]) {
+  try {
+    localStorage.setItem(SUBSCRIPTIONS_STORAGE_KEY, JSON.stringify(list.slice(0, 100)));
+  } catch {
+    // ignore
+  }
+}
+
+function loadTokenCreditsBalance(): number {
+  try {
+    const raw = localStorage.getItem(TOKEN_BALANCE_STORAGE_KEY);
+    if (!raw) return 62500;
+    const num = parseInt(raw, 10);
+    return Number.isFinite(num) && num >= 0 ? num : 62500;
+  } catch {
+    return 62500;
+  }
+}
+
+function saveTokenCreditsBalance(balance: number) {
+  try {
+    localStorage.setItem(TOKEN_BALANCE_STORAGE_KEY, String(Math.max(0, Math.round(balance))));
   } catch {
     // ignore
   }
@@ -1173,6 +1381,57 @@ const ProceduralVideoCanvas = ({
   );
 };
 
+// --- Golden Lightning Coin Icon (Matches IMG_4322_803e5739.png) ---
+const GoldenLightningCoinIcon = ({ size = 'md' }: { size?: 'sm' | 'md' | 'lg' }) => {
+  const dims =
+    size === 'lg'
+      ? 'w-24 h-24 border-4'
+      : size === 'md'
+      ? 'w-12 h-12 border-2'
+      : 'w-6 h-6 border';
+  const innerDims =
+    size === 'lg'
+      ? 'w-18 h-18 border-2'
+      : size === 'md'
+      ? 'w-9 h-9 border'
+      : 'w-4.5 h-4.5 border';
+  const boltDims = size === 'lg' ? 'w-10 h-10' : size === 'md' ? 'w-5 h-5' : 'w-3.5 h-3.5';
+
+  return (
+    <div className="relative inline-flex items-center justify-center shrink-0">
+      {size === 'lg' && (
+        <div
+          className="absolute -inset-4 rounded-full blur-xl pointer-events-none"
+          style={{
+            background: 'radial-gradient(circle, rgba(245, 158, 11, 0.35) 0%, rgba(217, 119, 6, 0.08) 65%, transparent 100%)',
+          }}
+        />
+      )}
+      <div
+        className={`${dims} rounded-full flex items-center justify-center border-amber-600 shadow-lg relative`}
+        style={{
+          background: 'linear-gradient(145deg, #facc15 0%, #d97706 55%, #92400e 100%)',
+          boxShadow:
+            size === 'lg'
+              ? '0 10px 25px -4px rgba(180, 83, 9, 0.45), inset 0 2px 4px rgba(254, 240, 138, 0.75)'
+              : '0 3px 8px rgba(180, 83, 9, 0.35)',
+        }}
+      >
+        <div
+          className={`${innerDims} rounded-full flex items-center justify-center border-amber-300/80`}
+          style={{
+            background: 'radial-gradient(circle at 35% 30%, #fde047 0%, #eab308 55%, #b45309 100%)',
+          }}
+        >
+          <Zap
+            className={`${boltDims} text-amber-950 fill-amber-900 drop-shadow-xs`}
+          />
+        </div>
+      </div>
+    </div>
+  );
+};
+
 // --- Sidebar ---
 const Sidebar = ({ 
   activeTab, 
@@ -1190,6 +1449,9 @@ const Sidebar = ({
   onCreateInScenario,
   onOpenCameraRecorder,
   onOpenRegistrationModal,
+  onOpenSubscriptionModal,
+  tokenCreditsBalance = 62500,
+  subscriptionStatus = 'active',
   draggingVideoCount = 0,
   dragOverFolder = null,
   onDragOverFolder,
@@ -1211,6 +1473,9 @@ const Sidebar = ({
   onCreateInScenario: (preset: SubjectPresetId) => void;
   onOpenCameraRecorder: () => void;
   onOpenRegistrationModal: () => void;
+  onOpenSubscriptionModal: () => void;
+  tokenCreditsBalance?: number;
+  subscriptionStatus?: 'active' | 'paused';
   draggingVideoCount?: number;
   dragOverFolder?: string | null;
   onDragOverFolder?: (folderName: string, e: React.DragEvent) => void;
@@ -1218,11 +1483,56 @@ const Sidebar = ({
   onDropToFolder?: (folderName: string, e: React.DragEvent) => void;
 }) => (
   <aside className="w-64 bg-white text-violet-800 border-r-2 border-cyan-400 flex flex-col shrink-0 shadow-lg">
-    <div className="p-6 border-b border-cyan-300/60">
+    <div className="p-5 border-b border-cyan-300/60 space-y-3">
       <h1 className="text-xl font-extrabold text-fuchsia-600 flex items-center gap-2 whitespace-nowrap">
         <Video className="w-6 h-6 text-cyan-500 shrink-0" />
         <span className="text-neon-electric">Reelify Video AI</span>
       </h1>
+
+      {/* Live Credits / Tokens Balance Card in Sidebar */}
+      <div className="p-3 rounded-xl bg-white border-2 border-cyan-400 shadow-sm space-y-2">
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2 min-w-0">
+            <GoldenLightningCoinIcon size="sm" />
+            <div className="min-w-0">
+              <div className="text-[10px] font-bold uppercase tracking-wider text-cyan-700">
+                Créditos Suscripción
+              </div>
+              <div className="text-sm font-extrabold font-mono tabular-nums text-fuchsia-600 truncate">
+                {tokenCreditsBalance.toLocaleString('en-US')} tokens
+              </div>
+            </div>
+          </div>
+          <span
+            className={`px-1.5 py-0.5 rounded text-[10px] font-extrabold uppercase ${
+              subscriptionStatus === 'active'
+                ? 'bg-emerald-100 text-emerald-700'
+                : 'bg-amber-100 text-amber-700'
+            }`}
+          >
+            {subscriptionStatus === 'active' ? 'Activa' : 'Pausada'}
+          </span>
+        </div>
+        <div className="grid grid-cols-2 gap-1.5">
+          <button
+            type="button"
+            onClick={onOpenSubscriptionModal}
+            className="px-2 py-1.5 rounded-lg bg-slate-950 hover:bg-slate-800 text-white text-[11px] font-extrabold flex items-center justify-center gap-1 transition-colors"
+            title="Comprar o acreditar más tokens como en la imagen ($5 → 62,500 tokens)"
+          >
+            <Zap className="w-3 h-3 text-amber-400" />
+            <span>Buy tokens</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab('subscriptions')}
+            className="px-2 py-1.5 rounded-lg bg-cyan-50 hover:bg-cyan-100 border border-cyan-400 text-violet-800 text-[11px] font-bold flex items-center justify-center gap-1 transition-colors"
+            title="Gestionar las preferencias de mis suscripciones"
+          >
+            <span>Preferencias</span>
+          </button>
+        </div>
+      </div>
     </div>
     
     <nav className="flex-1 px-4 py-4 space-y-6 overflow-y-auto">
@@ -1259,6 +1569,24 @@ const Sidebar = ({
           </span>
           <span className={`px-1.5 py-0.5 rounded-md text-xs font-mono tabular-nums ${showOnlyLiked ? 'bg-white/25 text-white' : 'bg-fuchsia-100 text-fuchsia-700'}`}>
             {likedCount}
+          </span>
+        </button>
+        <button
+          type="button"
+          onClick={() => setActiveTab('subscriptions')}
+          className={`w-full flex items-center justify-between px-4 py-2.5 rounded-lg text-sm font-bold transition-all whitespace-nowrap ${
+            activeTab === 'subscriptions'
+              ? 'bg-gradient-to-r from-fuchsia-600 via-violet-600 to-cyan-500 text-white shadow-md'
+              : 'hover:bg-cyan-50 text-fuchsia-600 border-2 border-cyan-400'
+          }`}
+          title="Gestionar las preferencias de mis suscripciones y recibir créditos (tokens)"
+        >
+          <span className="flex items-center gap-2.5">
+            <GoldenLightningCoinIcon size="sm" />
+            <span>Mis Suscripciones</span>
+          </span>
+          <span className="px-1.5 py-0.5 rounded bg-amber-100 text-amber-900 text-[10px] font-mono font-extrabold">
+            62.5K+
           </span>
         </button>
         <button 
@@ -3713,7 +4041,744 @@ const AiProductionSuite = ({
   );
 };
 
-// Free Business Registration Modal -> Directs every registration to https://whop.com/@saulmente
+// Subscription Preferences Manager & Token Credits System (Matching uploaded reference image /assets/aistudio/IMG_4322_803e5739.png)
+const SubscriptionPreferencesAndCreditsPanel = ({
+  tokenCreditsBalance,
+  preferences,
+  subscriptions,
+  onUpdatePreferences,
+  onSubscribeAndGrantTokens,
+  isSubmittingSubscription,
+  lastGrantedSubscription,
+  onCloseModal,
+  isModalMode = false,
+}: {
+  tokenCreditsBalance: number;
+  preferences: UserSubscriptionPreferences;
+  subscriptions: SubscriptionRecord[];
+  onUpdatePreferences: (next: UserSubscriptionPreferences) => void;
+  onSubscribeAndGrantTokens: (pkg: {
+    packageId: string;
+    priceUsd: number;
+    priceLabel: string;
+    tokensGranted: number;
+    subscriberName?: string;
+    subscriberEmail?: string;
+    redirectWhop?: boolean;
+  }) => Promise<void>;
+  isSubmittingSubscription: boolean;
+  lastGrantedSubscription: SubscriptionRecord | null;
+  onCloseModal?: () => void;
+  isModalMode?: boolean;
+}) => {
+  const [selectedPkgId, setSelectedPkgId] = useState<string>(
+    preferences.selectedPackageId || 'pkg_5'
+  );
+  const [subscriberName, setSubscriberName] = useState('');
+  const [subscriberEmail, setSubscriberEmail] = useState('');
+  const [showReferenceImagePreview, setShowReferenceImagePreview] = useState(false);
+  const [prefsSavedNotice, setPrefsSavedNotice] = useState<string | null>(null);
+
+  const selectedPackage = useMemo(() => {
+    return (
+      SUBSCRIPTION_TOKEN_PACKAGES.find((p) => p.id === selectedPkgId) ||
+      SUBSCRIPTION_TOKEN_PACKAGES[0]
+    );
+  }, [selectedPkgId]);
+
+  const handleSelectPackage = (pkgId: string) => {
+    setSelectedPkgId(pkgId);
+    onUpdatePreferences({
+      ...preferences,
+      selectedPackageId: pkgId,
+    });
+  };
+
+  const handleToggleCategory = (cat: string) => {
+    const exists = preferences.categories.includes(cat);
+    const nextCats = exists
+      ? preferences.categories.filter((c) => c !== cat)
+      : [...preferences.categories, cat];
+    onUpdatePreferences({
+      ...preferences,
+      categories: nextCats.length > 0 ? nextCats : [cat],
+    });
+  };
+
+  const handleToggleFormat = (fmt: string) => {
+    const exists = preferences.deliveryFormats.includes(fmt);
+    const nextFmts = exists
+      ? preferences.deliveryFormats.filter((f) => f !== fmt)
+      : [...preferences.deliveryFormats, fmt];
+    onUpdatePreferences({
+      ...preferences,
+      deliveryFormats: nextFmts.length > 0 ? nextFmts : [fmt],
+    });
+  };
+
+  const handleCategoryPriceChange = (cat: string, val: string) => {
+    onUpdatePreferences({
+      ...preferences,
+      categoryPrices: {
+        ...preferences.categoryPrices,
+        [cat]: val,
+      },
+    });
+  };
+
+  const handleSavePrefsClick = () => {
+    onUpdatePreferences({
+      ...preferences,
+      selectedPackageId: selectedPkgId,
+    });
+    setPrefsSavedNotice(
+      `Preferencias de suscripción guardadas · Paquete predeterminado: ${selectedPackage.tokensLabel} tokens (${selectedPackage.priceLabel}).`
+    );
+    setTimeout(() => setPrefsSavedNotice(null), 4000);
+  };
+
+  const handlePurchaseTokens = async () => {
+    await onSubscribeAndGrantTokens({
+      packageId: selectedPackage.id,
+      priceUsd: selectedPackage.priceUsd,
+      priceLabel: selectedPackage.priceLabel,
+      tokensGranted: selectedPackage.tokens,
+      subscriberName: subscriberName.trim() || undefined,
+      subscriberEmail: subscriberEmail.trim() || undefined,
+      redirectWhop: false,
+    });
+  };
+
+  const handleFreeSubscribeWithCredits = async () => {
+    await onSubscribeAndGrantTokens({
+      packageId: selectedPackage.id,
+      priceUsd: selectedPackage.priceUsd,
+      priceLabel: `${selectedPackage.priceLabel} (Suscripción Activa)`,
+      tokensGranted: selectedPackage.tokens,
+      subscriberName: subscriberName.trim() || 'Suscriptor VIP',
+      subscriberEmail: subscriberEmail.trim() || 'suscriptor@negocio.com',
+      redirectWhop: preferences.whopSyncEnabled,
+    });
+  };
+
+  return (
+    <div className="space-y-6">
+      {/* Top Summary Header Banner */}
+      <div className="bg-white border-2 border-fuchsia-500 rounded-2xl p-5 shadow-lg">
+        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+          <div className="space-y-1.5">
+            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-md bg-amber-50 border border-amber-400 text-amber-800 text-[11px] font-mono font-extrabold">
+              <span>⚡ SISTEMA DE CRÉDITOS Y PREFERENCIAS DE SUSCRIPCIÓN</span>
+            </div>
+            <h2 className="text-xl sm:text-2xl font-extrabold text-slate-900">
+              Gestionar Preferencias de Mis Suscripciones y Créditos (Tokens)
+            </h2>
+            <p className="text-xs sm:text-sm text-slate-600 max-w-3xl">
+              Configura las preferencias de tus suscripciones (categorías, modalidad de precio y formato de entrega como en tu imagen) y otorga créditos instantáneos (<strong>62,500</strong> a <strong>625,000 tokens</strong>) al suscribirse para usar todo el programa.
+            </p>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-3 shrink-0">
+            <div className="px-4 py-2.5 rounded-2xl bg-slate-950 text-white border-2 border-amber-400 flex items-center gap-3 shadow-md">
+              <GoldenLightningCoinIcon size="sm" />
+              <div>
+                <div className="text-[10px] font-mono uppercase tracking-wider text-amber-300">
+                  Saldo Disponible para Usar el Programa
+                </div>
+                <div className="text-lg font-black font-mono text-white tabular-nums">
+                  {tokenCreditsBalance.toLocaleString()}{' '}
+                  <span className="text-xs font-bold text-amber-400">tokens</span>
+                </div>
+              </div>
+            </div>
+
+            {isModalMode && onCloseModal && (
+              <button
+                type="button"
+                onClick={onCloseModal}
+                className="p-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 transition-colors"
+                title="Cerrar ventana"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* Main 2-Column Layout: Left = Exact "Buy tokens" Card from Screenshot | Right = Full Subscription Preferences Manager */}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+        {/* LEFT COLUMN (5 cols): Exact "Buy tokens" Card Replica from IMG_4322_803e5739.png */}
+        <div className="lg:col-span-5 bg-white border-2 border-slate-200 rounded-[28px] p-6 shadow-xl text-slate-900 space-y-6 relative overflow-hidden">
+          {/* Top Bar of "Buy tokens" sheet matching screenshot */}
+          <div className="flex items-center justify-between">
+            {isModalMode && onCloseModal ? (
+              <button
+                type="button"
+                onClick={onCloseModal}
+                className="w-10 h-10 rounded-full bg-slate-100 hover:bg-slate-200 flex items-center justify-center text-slate-800 transition-colors shadow-2xs"
+                title="Cerrar"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            ) : (
+              <div className="w-10 h-10 rounded-full bg-slate-100 flex items-center justify-center text-slate-800 font-bold text-xs">
+                ⚡
+              </div>
+            )}
+            <h3 className="text-lg font-extrabold text-slate-900 tracking-tight">
+              Buy tokens
+            </h3>
+            <button
+              type="button"
+              onClick={() => setShowReferenceImagePreview((prev) => !prev)}
+              className="px-2.5 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 text-[11px] font-bold text-slate-700 transition-colors"
+              title="Ver captura de referencia original"
+            >
+              {showReferenceImagePreview ? 'Ocultar Ref' : 'Ver Imagen Ref'}
+            </button>
+          </div>
+
+          {showReferenceImagePreview && (
+            <div className="p-3 rounded-2xl bg-slate-50 border border-slate-200 space-y-2">
+              <div className="flex items-center justify-between text-[11px] font-bold text-slate-600">
+                <span>Diseño de Referencia Adjunto (IMG_4322)</span>
+                <button
+                  type="button"
+                  onClick={() => setShowReferenceImagePreview(false)}
+                  className="text-slate-400 hover:text-slate-700"
+                >
+                  Cerrar
+                </button>
+              </div>
+              <img
+                src={SUBSCRIPTION_REFERENCE_IMAGE_URL}
+                alt="Buy tokens reference"
+                className="w-full max-h-72 object-contain rounded-xl border border-slate-200 bg-white"
+              />
+            </div>
+          )}
+
+          {/* Centered 3D Gold Coin with Lightning Bolt + Soft Radial Glow */}
+          <div className="flex flex-col items-center justify-center pt-2 pb-1">
+            <GoldenLightningCoinIcon size="lg" />
+            <div className="mt-5 text-center space-y-0.5">
+              <div className="text-sm font-semibold text-slate-500">
+                You&apos;ll receive
+              </div>
+              <div className="text-4xl sm:text-5xl font-black text-slate-950 tracking-tight tabular-nums">
+                {selectedPackage.tokensLabel}
+              </div>
+              <div className="text-sm font-semibold text-slate-500">
+                tokens
+              </div>
+            </div>
+          </div>
+
+          {/* 2x2 Selectable Tier Grid Matching the Image ($5.00, $10.00, $25.00, $50.00) */}
+          <div className="grid grid-cols-2 gap-3">
+            {SUBSCRIPTION_TOKEN_PACKAGES.map((pkg) => {
+              const isSelected = selectedPackage.id === pkg.id;
+              return (
+                <button
+                  key={pkg.id}
+                  type="button"
+                  onClick={() => handleSelectPackage(pkg.id)}
+                  className={`relative text-left p-4 rounded-2xl transition-all border-2 ${
+                    isSelected
+                      ? 'bg-blue-50/70 border-[#1d63ff] shadow-sm'
+                      : 'bg-slate-50/90 border-slate-200/90 hover:border-slate-300 hover:bg-slate-100/70'
+                  }`}
+                >
+                  <div className="flex items-center justify-between gap-2 mb-1">
+                    <span className="text-lg font-extrabold text-slate-950 tabular-nums">
+                      {pkg.priceLabel}
+                    </span>
+                    {isSelected && (
+                      <span className="w-5 h-5 rounded-full bg-[#1d63ff] text-white flex items-center justify-center shrink-0 shadow-2xs">
+                        <Check className="w-3.5 h-3.5 stroke-[3]" />
+                      </span>
+                    )}
+                  </div>
+                  <div className="text-xs font-semibold text-slate-500 tabular-nums">
+                    {pkg.tokensLabel} tokens
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+
+          {/* Optional Subscriber Name / Email for Subscription Record */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-1">
+            <input
+              type="text"
+              value={subscriberName}
+              onChange={(e) => setSubscriberName(e.target.value)}
+              placeholder="Tu Nombre o Negocio (opcional)"
+              className="w-full bg-slate-50 border border-slate-200 focus:border-blue-600 rounded-xl px-3 py-2 text-xs text-slate-900 placeholder-slate-400 outline-none"
+            />
+            <input
+              type="email"
+              value={subscriberEmail}
+              onChange={(e) => setSubscriberEmail(e.target.value)}
+              placeholder="Correo de suscripción (opcional)"
+              className="w-full bg-slate-50 border border-slate-200 focus:border-blue-600 rounded-xl px-3 py-2 text-xs text-slate-900 placeholder-slate-400 outline-none"
+            />
+          </div>
+
+          {/* Primary Black CTA Button Matching Screenshot: "Purchase for $5.00" */}
+          <div className="space-y-2.5 pt-1">
+            <button
+              type="button"
+              disabled={isSubmittingSubscription}
+              onClick={handlePurchaseTokens}
+              className="w-full py-4 px-6 rounded-2xl bg-black hover:bg-slate-900 disabled:opacity-50 text-white font-extrabold text-base flex items-center justify-center gap-2 shadow-lg transition-all cursor-pointer"
+            >
+              {isSubmittingSubscription ? (
+                <>
+                  <Loader2 className="w-5 h-5 animate-spin" />
+                  <span>Acreditando {selectedPackage.tokensLabel} tokens...</span>
+                </>
+              ) : (
+                <span>Purchase for {selectedPackage.priceLabel}</span>
+              )}
+            </button>
+
+            <button
+              type="button"
+              disabled={isSubmittingSubscription}
+              onClick={handleFreeSubscribeWithCredits}
+              className="w-full py-3 px-4 rounded-2xl bg-gradient-to-r from-amber-500 via-yellow-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 font-extrabold text-xs flex items-center justify-center gap-2 shadow-md transition-all cursor-pointer"
+            >
+              <Zap className="w-4 h-4" />
+              <span>
+                Suscribirme Ahora y Recibir +{selectedPackage.tokensLabel} Tokens Gratis para Usar el Programa
+              </span>
+            </button>
+          </div>
+
+          {lastGrantedSubscription && (
+            <div className="p-3.5 rounded-2xl bg-emerald-50 border-2 border-emerald-400 text-emerald-950 text-xs space-y-1.5">
+              <div className="font-extrabold text-emerald-800 flex items-center gap-1.5">
+                <Check className="w-4 h-4 text-emerald-600 shrink-0" />
+                <span>
+                  ¡+{lastGrantedSubscription.tokensGranted.toLocaleString()} tokens acreditados en tu cuenta!
+                </span>
+              </div>
+              <p className="text-[11px] text-emerald-700">
+                Suscripción activa ({lastGrantedSubscription.priceLabel}) · Saldo listo para generar videos IA, escenarios 3D, cámara, MP3 y MP4.
+              </p>
+            </div>
+          )}
+        </div>
+
+        {/* RIGHT COLUMN (7 cols): Subscription Preferences Manager (Categories, Pricing Mode, Delivery Formats, Auto-Credits & History) */}
+        <div className="lg:col-span-7 space-y-6">
+          <div className="bg-white border-2 border-slate-200 rounded-2xl p-6 shadow-md space-y-5">
+            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 pb-4">
+              <div>
+                <span className="text-[11px] font-mono uppercase tracking-wider text-fuchsia-600 font-bold">
+                  CONFIGURACIÓN DE PRODUCTOS Y PREFERENCIAS DE SUSCRIPCIÓN
+                </span>
+                <h3 className="text-lg font-extrabold text-slate-900">
+                  Preferencias de Mis Suscripciones (Categorías, Precio y Entrega)
+                </h3>
+              </div>
+              <div className="flex items-center gap-2">
+                <span
+                  className={`px-3 py-1 rounded-lg text-xs font-extrabold uppercase tracking-wider ${
+                    preferences.subscriptionStatus === 'active'
+                      ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
+                      : 'bg-amber-100 text-amber-800 border border-amber-300'
+                  }`}
+                >
+                  {preferences.subscriptionStatus === 'active' ? '● Suscripción Activa' : '◐ En Pausa'}
+                </span>
+                <button
+                  type="button"
+                  onClick={() =>
+                    onUpdatePreferences({
+                      ...preferences,
+                      subscriptionStatus:
+                        preferences.subscriptionStatus === 'active' ? 'paused' : 'active',
+                    })
+                  }
+                  className="px-3 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold transition-colors"
+                >
+                  {preferences.subscriptionStatus === 'active' ? 'Pausar' : 'Reactivar'}
+                </button>
+              </div>
+            </div>
+
+            {/* 1. Categorías (from top of screenshot: presentaciones, redes sociales, landing pages, mockups o logos animados) */}
+            <div className="space-y-2.5">
+              <label className="block text-xs font-extrabold text-slate-900 uppercase tracking-wider">
+                1. Categorías Incluidas en tu Suscripción (Presentaciones, Redes Sociales, Landing Pages, Mockups 3D, Logos Animados)
+              </label>
+              <p className="text-xs text-slate-500">
+                Selecciona las categorías habilitadas al suscribirse y usar tus créditos en el programa o en Whop Conexión:
+              </p>
+              <div className="flex flex-wrap gap-2 pt-1">
+                {SUBSCRIPTION_CATEGORY_OPTIONS.map((cat) => {
+                  const active = preferences.categories.includes(cat);
+                  return (
+                    <button
+                      key={cat}
+                      type="button"
+                      onClick={() => handleToggleCategory(cat)}
+                      className={`px-3.5 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 border-2 transition-all ${
+                        active
+                          ? 'bg-indigo-600 text-white border-indigo-600 shadow-xs'
+                          : 'bg-slate-50 text-slate-700 border-slate-200 hover:border-slate-300'
+                      }`}
+                    >
+                      {active && <Check className="w-3.5 h-3.5" />}
+                      <span>{cat}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* 2. Precio: uno solo para todas o por categoría (from screenshot) */}
+            <div className="space-y-3 pt-2 border-t border-slate-100">
+              <label className="block text-xs font-extrabold text-slate-900 uppercase tracking-wider">
+                2. Modalidad de Precio (Uno solo para todas o por categoría)
+              </label>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <button
+                  type="button"
+                  onClick={() =>
+                    onUpdatePreferences({
+                      ...preferences,
+                      pricingMode: 'single',
+                    })
+                  }
+                  className={`p-3.5 rounded-xl border-2 text-left transition-all ${
+                    preferences.pricingMode === 'single'
+                      ? 'bg-blue-50/80 border-[#1d63ff] text-slate-950'
+                      : 'bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100'
+                  }`}
+                >
+                  <div className="flex items-center justify-between font-extrabold text-xs mb-1">
+                    <span>Un solo precio para todas</span>
+                    {preferences.pricingMode === 'single' && (
+                      <Check className="w-4 h-4 text-[#1d63ff]" />
+                    )}
+                  </div>
+                  <p className="text-[11px] text-slate-500">
+                    Un único pago o suscripción desbloquea todas las categorías seleccionadas con tokens globales.
+                  </p>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() =>
+                    onUpdatePreferences({
+                      ...preferences,
+                      pricingMode: 'per_category',
+                    })
+                  }
+                  className={`p-3.5 rounded-xl border-2 text-left transition-all ${
+                    preferences.pricingMode === 'per_category'
+                      ? 'bg-blue-50/80 border-[#1d63ff] text-slate-950'
+                      : 'bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100'
+                  }`}
+                >
+                  <div className="flex items-center justify-between font-extrabold text-xs mb-1">
+                    <span>Precio por categoría</span>
+                    {preferences.pricingMode === 'per_category' && (
+                      <Check className="w-4 h-4 text-[#1d63ff]" />
+                    )}
+                  </div>
+                  <p className="text-[11px] text-slate-500">
+                    Define un precio personalizado en USD para cada categoría de plantillas 3D y productos.
+                  </p>
+                </button>
+              </div>
+
+              {preferences.pricingMode === 'single' ? (
+                <div className="flex items-center gap-3 p-3 rounded-xl bg-slate-50 border border-slate-200">
+                  <span className="text-xs font-bold text-slate-700">
+                    Precio único global (USD):
+                  </span>
+                  <div className="relative w-36">
+                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-xs font-bold text-slate-500">
+                      $
+                    </span>
+                    <input
+                      type="text"
+                      value={preferences.singlePriceUsd}
+                      onChange={(e) =>
+                        onUpdatePreferences({
+                          ...preferences,
+                          singlePriceUsd: e.target.value,
+                        })
+                      }
+                      className="w-full bg-white border border-slate-300 rounded-lg py-1.5 pl-6 pr-3 text-xs font-extrabold text-slate-900 outline-none focus:border-blue-600"
+                    />
+                  </div>
+                  <span className="text-[11px] text-slate-500">
+                    (Incluye +{selectedPackage.tokensLabel} tokens al suscribirse)
+                  </span>
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 p-3 rounded-xl bg-slate-50 border border-slate-200">
+                  {preferences.categories.map((cat) => (
+                    <div
+                      key={cat}
+                      className="flex items-center justify-between gap-2 bg-white p-2 rounded-lg border border-slate-200"
+                    >
+                      <span className="text-xs font-semibold text-slate-800 truncate">
+                        {cat}
+                      </span>
+                      <div className="relative w-24 shrink-0">
+                        <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-xs font-bold text-slate-400">
+                          $
+                        </span>
+                        <input
+                          type="text"
+                          value={preferences.categoryPrices[cat] || '5.00'}
+                          onChange={(e) => handleCategoryPriceChange(cat, e.target.value)}
+                          className="w-full bg-slate-50 border border-slate-200 rounded-md py-1 pl-5 pr-2 text-xs font-bold text-slate-900 outline-none focus:border-blue-600"
+                        />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* 3. Formato de entrega: Canva, Figma, Estudio 3D, MP4, MP3 (from screenshot) */}
+            <div className="space-y-2.5 pt-2 border-t border-slate-100">
+              <label className="block text-xs font-extrabold text-slate-900 uppercase tracking-wider">
+                3. Formato de Entrega (Canva, Figma, Estudio 3D, Video MP4, Audio MP3)
+              </label>
+              <div className="flex flex-wrap gap-2">
+                {SUBSCRIPTION_FORMAT_OPTIONS.map((fmt) => {
+                  const active = preferences.deliveryFormats.includes(fmt);
+                  return (
+                    <button
+                      key={fmt}
+                      type="button"
+                      onClick={() => handleToggleFormat(fmt)}
+                      className={`px-3.5 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 border-2 transition-all ${
+                        active
+                          ? 'bg-emerald-600 text-white border-emerald-600 shadow-xs'
+                          : 'bg-slate-50 text-slate-700 border-slate-200 hover:border-slate-300'
+                      }`}
+                    >
+                      {active && <Check className="w-3.5 h-3.5" />}
+                      <span>{fmt}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* 4. Preferencias de Ciclo, Recarga Automática de Créditos y Conexión Whop */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2 border-t border-slate-100">
+              <div className="p-3 rounded-xl bg-slate-50 border border-slate-200 space-y-2">
+                <label className="block text-xs font-bold text-slate-800">
+                  Ciclo de Suscripción
+                </label>
+                <select
+                  value={preferences.billingCycle}
+                  onChange={(e) =>
+                    onUpdatePreferences({
+                      ...preferences,
+                      billingCycle: e.target.value as 'monthly' | 'annual' | 'one_time',
+                    })
+                  }
+                  className="w-full bg-white border border-slate-300 rounded-lg px-3 py-2 text-xs font-semibold text-slate-900 outline-none"
+                >
+                  <option value="monthly">Mensual (Renovación de tokens cada mes)</option>
+                  <option value="annual">Anual (Bonificación doble de tokens)</option>
+                  <option value="one_time">Paquete Único (Recarga directa de tokens)</option>
+                </select>
+              </div>
+
+              <div className="p-3 rounded-xl bg-slate-50 border border-slate-200 space-y-2 flex flex-col justify-center">
+                <label className="flex items-center gap-2 text-xs font-semibold text-slate-800 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={preferences.autoGrantCreditsOnSubscribe}
+                    onChange={(e) =>
+                      onUpdatePreferences({
+                        ...preferences,
+                        autoGrantCreditsOnSubscribe: e.target.checked,
+                      })
+                    }
+                    className="rounded text-blue-600 focus:ring-blue-500"
+                  />
+                  <span>Dar créditos automáticamente al suscribirse ({selectedPackage.tokensLabel} tokens)</span>
+                </label>
+
+                <label className="flex items-center gap-2 text-xs font-semibold text-slate-800 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={preferences.autoRecharge}
+                    onChange={(e) =>
+                      onUpdatePreferences({
+                        ...preferences,
+                        autoRecharge: e.target.checked,
+                      })
+                    }
+                    className="rounded text-blue-600 focus:ring-blue-500"
+                  />
+                  <span>Auto-recargar tokens cuando el saldo baje de 5,000 tokens</span>
+                </label>
+
+                <label className="flex items-center gap-2 text-xs font-semibold text-slate-800 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={preferences.whopSyncEnabled}
+                    onChange={(e) =>
+                      onUpdatePreferences({
+                        ...preferences,
+                        whopSyncEnabled: e.target.checked,
+                      })
+                    }
+                    className="rounded text-blue-600 focus:ring-blue-500"
+                  />
+                  <span>Sincronizar checkout con Whop (@saulmente)</span>
+                </label>
+              </div>
+            </div>
+
+            {prefsSavedNotice && (
+              <div className="p-3 rounded-xl bg-emerald-50 border border-emerald-300 text-emerald-900 text-xs font-semibold flex items-center gap-2">
+                <Check className="w-4 h-4 text-emerald-600 shrink-0" />
+                <span>{prefsSavedNotice}</span>
+              </div>
+            )}
+
+            <div className="flex flex-wrap items-center justify-between gap-3 pt-2">
+              <button
+                type="button"
+                onClick={handleSavePrefsClick}
+                className="px-5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-extrabold flex items-center gap-2 shadow-sm transition-colors cursor-pointer"
+              >
+                <Save className="w-4 h-4" />
+                <span>Guardar Preferencias de Mis Suscripciones</span>
+              </button>
+
+              <a
+                href={WHOP_TARGET_URL}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="px-4 py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-800 text-xs font-bold flex items-center gap-1.5 transition-colors"
+              >
+                <span>Abrir Whop Conexión (@saulmente)</span>
+                <ExternalLink className="w-3.5 h-3.5" />
+              </a>
+            </div>
+          </div>
+
+          {/* Active Subscriptions & Token Credit Grants History */}
+          <div className="bg-white border-2 border-slate-200 rounded-2xl p-6 shadow-md space-y-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <h4 className="text-sm font-extrabold text-slate-900">
+                  Historial de Suscripciones y Créditos Otorgados ({subscriptions.length})
+                </h4>
+                <p className="text-xs text-slate-500">
+                  Cada suscripción o paquete acreditado suma tokens inmediatamente para usar todas las funciones del programa.
+                </p>
+              </div>
+              <span className="px-2.5 py-1 rounded-lg bg-amber-100 text-amber-900 text-xs font-mono font-bold">
+                Total: {tokenCreditsBalance.toLocaleString()} tokens
+              </span>
+            </div>
+
+            {subscriptions.length === 0 ? (
+              <div className="p-6 rounded-xl bg-slate-50 border border-dashed border-slate-200 text-center text-xs text-slate-500">
+                Aún no hay recargas adicionales registradas. Selecciona un paquete en <strong>Buy tokens</strong> (ej. $5.00 → 62,500 tokens) para acreditarlo al instante.
+              </div>
+            ) : (
+              <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
+                {subscriptions.slice(0, 15).map((sub) => (
+                  <div
+                    key={sub.id}
+                    className="p-3 rounded-xl bg-slate-50 border border-slate-200 flex flex-wrap items-center justify-between gap-3 text-xs"
+                  >
+                    <div className="flex items-center gap-3 min-w-0">
+                      <GoldenLightningCoinIcon size="sm" />
+                      <div className="min-w-0">
+                        <div className="font-extrabold text-slate-900 truncate">
+                          +{sub.tokensGranted.toLocaleString()} tokens ·{' '}
+                          <span className="text-blue-600">{sub.priceLabel}</span>
+                        </div>
+                        <div className="text-[11px] text-slate-500 truncate">
+                          {sub.subscriberName || 'Suscriptor'} · Categorías: {(sub.categories || []).slice(0, 3).join(', ')} · Entrega: {(sub.deliveryFormats || []).join(', ')}
+                        </div>
+                      </div>
+                    </div>
+                    <span className="px-2.5 py-1 rounded-md bg-emerald-100 text-emerald-800 text-[10px] font-extrabold uppercase tracking-wider shrink-0">
+                      Acreditado
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const BuyTokensSubscriptionModal = ({
+  isOpen,
+  onClose,
+  tokenCreditsBalance,
+  preferences,
+  subscriptions,
+  onUpdatePreferences,
+  onSubscribeAndGrantTokens,
+  isSubmittingSubscription,
+  lastGrantedSubscription,
+}: {
+  isOpen: boolean;
+  onClose: () => void;
+  tokenCreditsBalance: number;
+  preferences: UserSubscriptionPreferences;
+  subscriptions: SubscriptionRecord[];
+  onUpdatePreferences: (next: UserSubscriptionPreferences) => void;
+  onSubscribeAndGrantTokens: (pkg: {
+    packageId: string;
+    priceUsd: number;
+    priceLabel: string;
+    tokensGranted: number;
+    subscriberName?: string;
+    subscriberEmail?: string;
+    redirectWhop?: boolean;
+  }) => Promise<void>;
+  isSubmittingSubscription: boolean;
+  lastGrantedSubscription: SubscriptionRecord | null;
+}) => {
+  if (!isOpen) return null;
+
+  return (
+    <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto">
+      <div className="max-w-5xl w-full max-h-[92vh] overflow-y-auto rounded-3xl bg-slate-100 p-4 sm:p-6 shadow-2xl border border-slate-300">
+        <SubscriptionPreferencesAndCreditsPanel
+          tokenCreditsBalance={tokenCreditsBalance}
+          preferences={preferences}
+          subscriptions={subscriptions}
+          onUpdatePreferences={onUpdatePreferences}
+          onSubscribeAndGrantTokens={onSubscribeAndGrantTokens}
+          isSubmittingSubscription={isSubmittingSubscription}
+          lastGrantedSubscription={lastGrantedSubscription}
+          onCloseModal={onClose}
+          isModalMode={true}
+        />
+      </div>
+    </div>
+  );
+};
+
+// Free Business Registration Modal -> Directs every registration to https://whop.com/@saulmente and grants subscription tokens
 const FreeBusinessRegistrationModal = ({
   isOpen,
   onClose,
@@ -3739,7 +4804,7 @@ const FreeBusinessRegistrationModal = ({
   const [email, setEmail] = useState('');
   const [businessName, setBusinessName] = useState('');
   const [phone, setPhone] = useState('');
-  const [planType, setPlanType] = useState('Acceso Gratis Total · Videos IA + Escenarios 3D + MP3/MP4');
+  const [planType, setPlanType] = useState('Acceso Gratis Total · +62,500 Tokens + Videos IA + Escenarios 3D');
   const [formError, setFormError] = useState<string | null>(null);
 
   if (!isOpen) return null;
@@ -3774,10 +4839,10 @@ const FreeBusinessRegistrationModal = ({
             </div>
             <div>
               <span className="inline-block text-[10px] font-mono uppercase tracking-widest text-emerald-300">
-                REGISTRO OFICIAL 100% GRATIS · WHOP @SAULMENTE
+                REGISTRO OFICIAL 100% GRATIS · +62,500 TOKENS · WHOP @SAULMENTE
               </span>
               <h2 className="text-lg font-bold text-white">
-                Registro Gratis para Usar Mi Negocio
+                Registro Gratis para Usar Mi Negocio (+62,500 Tokens)
               </h2>
             </div>
           </div>
@@ -3795,10 +4860,10 @@ const FreeBusinessRegistrationModal = ({
             <div className="text-xs text-emerald-100 space-y-0.5">
               <div className="font-bold text-emerald-300 flex items-center gap-1.5">
                 <Check className="w-4 h-4" />
-                <span>Cada registro es dirigido automáticamente a Whop (@saulmente)</span>
+                <span>Cada registro otorga +62,500 tokens y es dirigido a Whop (@saulmente)</span>
               </div>
               <p className="text-emerald-200/80">
-                Regístrate gratis para usar todas las herramientas del negocio (Videos IA, Escenarios 3D, Cámara, MP3 y MP4) y acceder a{' '}
+                Regístrate gratis para recibir créditos de bienvenida y usar todas las herramientas del negocio (Videos IA, Escenarios 3D, Cámara, MP3 y MP4) y acceder a{' '}
                 <span className="font-mono underline">{WHOP_TARGET_URL}</span>.
               </p>
             </div>
@@ -3818,13 +4883,13 @@ const FreeBusinessRegistrationModal = ({
               <div className="flex items-start justify-between gap-3">
                 <div>
                   <span className="inline-block px-2 py-0.5 rounded bg-emerald-500 text-slate-950 text-[10px] font-extrabold uppercase tracking-wider mb-1">
-                    ¡Registro Gratis Completado!
+                    ¡Registro Gratis Completado + 62,500 Tokens Acreditados!
                   </span>
                   <h3 className="text-sm font-bold text-white">
                     Bienvenido/a, {lastRegistered.name} ({lastRegistered.businessName})
                   </h3>
                   <p className="text-xs text-slate-300 mt-0.5">
-                    Tu registro ha sido guardado y dirigido a{' '}
+                    Tu registro ha sido guardado con +{(lastRegistered.tokensGranted || 62500).toLocaleString()} tokens y dirigido a{' '}
                     <span className="font-mono text-emerald-300">{WHOP_TARGET_URL}</span>.
                   </p>
                 </div>
@@ -3913,11 +4978,11 @@ const FreeBusinessRegistrationModal = ({
                 onChange={(e) => setPlanType(e.target.value)}
                 className="w-full bg-slate-950 border border-slate-700 focus:border-emerald-400 rounded-xl px-3.5 py-2.5 text-xs text-white outline-none"
               >
-                <option value="Acceso Gratis Total · Videos IA + Escenarios 3D + MP3/MP4">
-                  Acceso Gratis Total · Videos IA + Escenarios 3D + MP3/MP4
+                <option value="Acceso Gratis Total · +62,500 Tokens + Videos IA + Escenarios 3D">
+                  Acceso Gratis Total · +62,500 Tokens + Videos IA + Escenarios 3D
                 </option>
-                <option value="Comunidad & Negocio en Whop (@saulmente)">
-                  Comunidad & Negocio en Whop (@saulmente)
+                <option value="Suscripción con Créditos (125,000 Tokens) · Whop (@saulmente)">
+                  Suscripción con Créditos (125,000 Tokens) · Whop (@saulmente)
                 </option>
                 <option value="Creación de Anuncios Comerciales & Reels IA">
                   Creación de Anuncios Comerciales & Reels IA
@@ -3943,12 +5008,12 @@ const FreeBusinessRegistrationModal = ({
               {isSubmitting ? (
                 <>
                   <Loader2 className="w-4 h-4 animate-spin" />
-                  <span>Registrando y dirigiendo a Whop (@saulmente)...</span>
+                  <span>Registrando, acreditando tokens y dirigiendo a Whop (@saulmente)...</span>
                 </>
               ) : (
                 <>
                   <Zap className="w-4 h-4" />
-                  <span>Registrarme Gratis Ahora y Entrar a https://whop.com/@saulmente</span>
+                  <span>Registrarme Gratis (+62,500 Tokens) y Entrar a https://whop.com/@saulmente</span>
                   <ExternalLink className="w-4 h-4" />
                 </>
               )}
@@ -3981,6 +5046,11 @@ const FreeBusinessRegistrationModal = ({
                       <div className="font-bold text-white truncate">
                         {reg.name}{' '}
                         <span className="text-emerald-400 font-normal">· {reg.businessName}</span>
+                        {reg.tokensGranted ? (
+                          <span className="ml-1.5 text-amber-300 font-mono text-[10px]">
+                            (+{reg.tokensGranted.toLocaleString()} tokens)
+                          </span>
+                        ) : null}
                       </div>
                       <div className="text-[11px] text-slate-400 truncate">
                         {reg.email} · {reg.planType}
@@ -4162,6 +5232,134 @@ export default function App() {
   const [inlineRegPhone, setInlineRegPhone] = useState('');
   const whopRedirectAnchorRef = useRef<HTMLAnchorElement | null>(null);
 
+  // Subscription Preferences & Token Credits System State (Matching /assets/aistudio/IMG_4322_803e5739.png)
+  const [tokenCreditsBalance, setTokenCreditsBalance] = useState<number>(() =>
+    loadTokenCreditsBalance()
+  );
+  const [subscriptionPrefs, setSubscriptionPrefs] = useState<UserSubscriptionPreferences>(() =>
+    loadSubscriptionPreferences()
+  );
+  const [localSubscriptions, setLocalSubscriptions] = useState<SubscriptionRecord[]>(() =>
+    loadLocalSubscriptions()
+  );
+  const [cloudSubscriptions, setCloudSubscriptions] = useState<SubscriptionRecord[]>([]);
+  const [isSubscriptionModalOpen, setIsSubscriptionModalOpen] = useState<boolean>(false);
+  const [isSubmittingSubscription, setIsSubmittingSubscription] = useState<boolean>(false);
+  const [lastGrantedSubscription, setLastGrantedSubscription] = useState<SubscriptionRecord | null>(
+    null
+  );
+
+  const subscriptions = useMemo(() => {
+    const map = new Map<string, SubscriptionRecord>();
+    cloudSubscriptions.forEach((s) => map.set(s.id, s));
+    localSubscriptions.forEach((s) => {
+      if (!map.has(s.id)) map.set(s.id, s);
+    });
+    return Array.from(map.values());
+  }, [cloudSubscriptions, localSubscriptions]);
+
+  const handleUpdateSubscriptionPreferences = (nextPrefs: UserSubscriptionPreferences) => {
+    setSubscriptionPrefs(nextPrefs);
+    saveSubscriptionPreferences(nextPrefs);
+  };
+
+  const handleSubscribeAndGrantTokens = async (pkg: {
+    packageId: string;
+    priceUsd: number;
+    priceLabel: string;
+    tokensGranted: number;
+    subscriberName?: string;
+    subscriberEmail?: string;
+    redirectWhop?: boolean;
+  }) => {
+    setIsSubmittingSubscription(true);
+    if (pkg.redirectWhop) {
+      triggerWhopRedirect(whopRedirectAnchorRef.current);
+    }
+
+    const grantedAmount = Math.max(0, Number(pkg.tokensGranted) || 62500);
+    setTokenCreditsBalance((prev) => {
+      const updated = prev + grantedAmount;
+      saveTokenCreditsBalance(updated);
+      return updated;
+    });
+
+    const newSubRecord: SubscriptionRecord = {
+      id: `sub-${Date.now()}`,
+      userId: user?.uid || 'guest',
+      subscriberName: (pkg.subscriberName || user?.displayName || 'Suscriptor Estudio').slice(0, 120),
+      subscriberEmail: (pkg.subscriberEmail || user?.email || 'suscriptor@negocio.com').slice(0, 256),
+      packageId: pkg.packageId.slice(0, 60),
+      priceUsd: pkg.priceUsd,
+      priceLabel: pkg.priceLabel.slice(0, 40),
+      tokensGranted: grantedAmount,
+      categories: subscriptionPrefs.categories.slice(0, 12),
+      pricingMode: subscriptionPrefs.pricingMode,
+      deliveryFormats: subscriptionPrefs.deliveryFormats.slice(0, 10),
+      autoRecharge: subscriptionPrefs.autoRecharge,
+      status: 'active',
+      createdAtIso: new Date().toISOString(),
+    };
+
+    setLocalSubscriptions((prev) => {
+      const next = [newSubRecord, ...prev];
+      saveLocalSubscriptions(next);
+      return next;
+    });
+    setLastGrantedSubscription(newSubRecord);
+
+    const updatedPrefs: UserSubscriptionPreferences = {
+      ...subscriptionPrefs,
+      selectedPackageId: pkg.packageId,
+      subscriptionStatus: 'active',
+    };
+    setSubscriptionPrefs(updatedPrefs);
+    saveSubscriptionPreferences(updatedPrefs);
+
+    setSaveBannerMessage(
+      `¡Suscripción acreditada! Recibiste +${grantedAmount.toLocaleString()} tokens (${pkg.priceLabel}) para usar todas las funciones del programa.`
+    );
+    setTimeout(() => setSaveBannerMessage(null), 5000);
+
+    try {
+      await fetch('/api/subscriptions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newSubRecord),
+      });
+    } catch {
+      // ignore network error; local & Firestore handle persistence
+    }
+
+    if (user) {
+      try {
+        await addDoc(collection(db, 'subscriptions'), {
+          userId: user.uid,
+          subscriberName: newSubRecord.subscriberName || '',
+          subscriberEmail: newSubRecord.subscriberEmail || '',
+          packageId: newSubRecord.packageId,
+          priceUsd: newSubRecord.priceUsd,
+          priceLabel: newSubRecord.priceLabel,
+          tokensGranted: newSubRecord.tokensGranted,
+          categories: newSubRecord.categories,
+          pricingMode: newSubRecord.pricingMode,
+          deliveryFormats: newSubRecord.deliveryFormats,
+          autoRecharge: newSubRecord.autoRecharge,
+          status: 'active',
+          createdAt: serverTimestamp(),
+        });
+      } catch (err) {
+        try {
+          handleFirestoreError(err, OperationType.CREATE, 'subscriptions');
+        } catch {
+          // logged structured error
+        }
+      }
+    }
+
+    setIsSubmittingSubscription(false);
+  };
+
   const registrations = useMemo(() => {
     const map = new Map<string, FreeBusinessRegistration>();
     cloudRegistrations.forEach((r) => map.set(r.id, r));
@@ -4186,6 +5384,17 @@ export default function App() {
     // Immediately trigger navigation to https://whop.com/@saulmente inside the user gesture handler
     triggerWhopRedirect(whopRedirectAnchorRef.current);
 
+    const selectedPkg =
+      SUBSCRIPTION_TOKEN_PACKAGES.find((p) => p.id === subscriptionPrefs.selectedPackageId) ||
+      SUBSCRIPTION_TOKEN_PACKAGES[0];
+    const grantedTokens = subscriptionPrefs.autoGrantCreditsOnSubscribe ? selectedPkg.tokens : 62500;
+
+    setTokenCreditsBalance((prev) => {
+      const nextBal = prev + grantedTokens;
+      saveTokenCreditsBalance(nextBal);
+      return nextBal;
+    });
+
     const newEntry: FreeBusinessRegistration = {
       id: `reg-${Date.now()}`,
       userId: user?.uid || 'guest',
@@ -4194,6 +5403,8 @@ export default function App() {
       businessName: (payload.businessName.trim() || 'Mi Negocio').slice(0, 160),
       phone: payload.phone.trim().slice(0, 60),
       planType: (payload.planType || 'Acceso Gratis Total · Negocio').slice(0, 80),
+      tokensGranted: grantedTokens,
+      priceLabel: selectedPkg.priceLabel,
       targetUrl: WHOP_TARGET_URL,
       createdAtIso: new Date().toISOString(),
     };
@@ -4205,7 +5416,7 @@ export default function App() {
     });
     setLastRegisteredEntry(newEntry);
     setSaveBannerMessage(
-      `¡Registro gratis completado para "${newEntry.name}" (${newEntry.businessName})! Redirigiendo a ${WHOP_TARGET_URL}`
+      `¡Registro gratis completado para "${newEntry.name}" (+${grantedTokens.toLocaleString()} tokens acreditados)! Redirigiendo a ${WHOP_TARGET_URL}`
     );
 
     try {
@@ -4227,6 +5438,8 @@ export default function App() {
           businessName: newEntry.businessName,
           phone: newEntry.phone || '',
           planType: newEntry.planType,
+          tokensGranted: grantedTokens,
+          priceLabel: selectedPkg.priceLabel,
           targetUrl: WHOP_TARGET_URL,
           createdAt: serverTimestamp(),
         });
@@ -4265,6 +5478,22 @@ export default function App() {
         }
       })
       .catch(() => {});
+
+    fetch('/api/subscriptions')
+      .then((r) => r.json())
+      .then((data) => {
+        if (Array.isArray(data?.subscriptions) && data.subscriptions.length > 0) {
+          setLocalSubscriptions((prev) => {
+            const ids = new Set(prev.map((p) => p.id));
+            const merged = [...prev];
+            for (const item of data.subscriptions) {
+              if (!ids.has(item.id)) merged.push(item);
+            }
+            return merged;
+          });
+        }
+      })
+      .catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -4284,6 +5513,23 @@ export default function App() {
       },
       (err) => {
         console.warn('Firestore registrations listener warning:', err);
+      }
+    );
+
+    const subQuery = query(
+      collection(db, 'subscriptions'),
+      where('userId', '==', user.uid)
+    );
+    const unsubSubs = onSnapshot(
+      subQuery,
+      (snap) => {
+        const list = snap.docs.map(
+          (d) => ({ id: d.id, ...d.data() } as SubscriptionRecord)
+        );
+        setCloudSubscriptions(list);
+      },
+      (err) => {
+        console.warn('Firestore subscriptions listener warning:', err);
       }
     );
 
@@ -4311,6 +5557,7 @@ export default function App() {
 
     return () => {
       unsubReg();
+      unsubSubs();
       unsubVids();
     };
   }, [user]);
@@ -6174,6 +7421,9 @@ export default function App() {
           })
         }
         onOpenRegistrationModal={() => setIsRegistrationModalOpen(true)}
+        onOpenSubscriptionModal={() => setIsSubscriptionModalOpen(true)}
+        tokenCreditsBalance={tokenCreditsBalance}
+        subscriptionStatus={subscriptionPrefs.subscriptionStatus}
         draggingVideoCount={draggingVideoIds.length}
         dragOverFolder={dragOverFolder}
         onDragOverFolder={(folderKey) => setDragOverFolder(folderKey)}
@@ -6197,7 +7447,9 @@ export default function App() {
           <div className="flex items-center gap-2 text-sm text-slate-500 whitespace-nowrap">
             <span>Projects</span>
             <ChevronRight className="w-4 h-4" />
-            <span className="text-slate-900 font-medium capitalize">{activeTab}</span>
+            <span className="text-slate-900 font-medium capitalize">
+              {activeTab === 'subscriptions' ? 'Mis Suscripciones & Tokens' : activeTab}
+            </span>
             {activeTab === 'dashboard' && selectedFolder !== 'all' && (
               <>
                 <ChevronRight className="w-4 h-4" />
@@ -6222,6 +7474,26 @@ export default function App() {
           )}
           
           <div className="flex items-center gap-2.5 shrink-0">
+            <button
+              type="button"
+              onClick={() => setIsSubscriptionModalOpen(true)}
+              className="px-3.5 py-2 rounded-lg text-xs font-extrabold bg-amber-500 hover:bg-amber-400 text-slate-950 transition-colors flex items-center gap-1.5 whitespace-nowrap shrink-0 shadow-xs cursor-pointer"
+              title="Gestionar Preferencias de Mis Suscripciones y Créditos (Buy tokens)"
+            >
+              <span>⚡ {tokenCreditsBalance.toLocaleString()} tokens · Buy tokens</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveTab('subscriptions')}
+              className={`px-3 py-2 rounded-lg text-xs font-extrabold transition-colors flex items-center gap-1.5 whitespace-nowrap shrink-0 cursor-pointer ${
+                activeTab === 'subscriptions'
+                  ? 'bg-slate-900 text-white'
+                  : 'bg-amber-50 text-amber-900 border border-amber-300 hover:bg-amber-100'
+              }`}
+              title="Gestionar las preferencias de mis suscripciones"
+            >
+              <span>Mis Suscripciones</span>
+            </button>
             <button
               type="button"
               onClick={() => setIsRegistrationModalOpen(true)}
@@ -6320,10 +7592,10 @@ export default function App() {
               <div className="space-y-1">
                 <div className="inline-flex items-center gap-2 px-2.5 py-0.5 rounded-md bg-fuchsia-50 border border-fuchsia-400 text-fuchsia-600 text-[11px] font-mono font-bold">
                   <Zap className="w-3.5 h-3.5 text-cyan-500" />
-                  <span>ACCESO 100% GRATIS A MI NEGOCIO · DIRIGIDO A WHOP (@SAULMENTE)</span>
+                  <span>ACCESO 100% GRATIS A MI NEGOCIO · +62,500 TOKENS · DIRIGIDO A WHOP (@SAULMENTE)</span>
                 </div>
                 <h2 className="text-lg sm:text-xl font-extrabold text-fuchsia-600">
-                  Regístrate Gratis para Usar Mi Negocio y Entra Directo a{' '}
+                  Regístrate Gratis o Suscríbete con Créditos (+62,500 Tokens) y Entra Directo a{' '}
                   <a
                     href={WHOP_TARGET_URL}
                     target="_blank"
@@ -6334,12 +7606,19 @@ export default function App() {
                   </a>
                 </h2>
                 <p className="text-xs text-violet-700 font-medium max-w-3xl">
-                  Completa tu registro rápido aquí abajo: cada registro activa el uso gratis de las herramientas de mi negocio y te dirige automáticamente a{' '}
+                  Completa tu registro rápido aquí abajo o gestiona tus preferencias de suscripción: cada suscripción te otorga <strong>62,500 a 625,000 tokens</strong> para usar el programa y te dirige a{' '}
                   <span className="font-mono font-bold text-fuchsia-600">{WHOP_TARGET_URL}</span>.
                 </p>
               </div>
 
               <div className="flex flex-wrap items-center gap-2.5 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => setIsSubscriptionModalOpen(true)}
+                  className="px-4 py-2.5 rounded-xl bg-black hover:bg-slate-900 text-white text-xs font-extrabold flex items-center gap-2 whitespace-nowrap shadow-md transition-all cursor-pointer"
+                >
+                  <span>⚡ Buy tokens · Preferencias Suscripción</span>
+                </button>
                 <a
                   href={WHOP_TARGET_URL}
                   target="_blank"
@@ -6451,7 +7730,17 @@ export default function App() {
             )}
           </div>
 
-          {activeTab === 'ai-suite' ? (
+          {activeTab === 'subscriptions' ? (
+            <SubscriptionPreferencesAndCreditsPanel
+              tokenCreditsBalance={tokenCreditsBalance}
+              preferences={subscriptionPrefs}
+              subscriptions={subscriptions}
+              onUpdatePreferences={handleUpdateSubscriptionPreferences}
+              onSubscribeAndGrantTokens={handleSubscribeAndGrantTokens}
+              isSubmittingSubscription={isSubmittingSubscription}
+              lastGrantedSubscription={lastGrantedSubscription}
+            />
+          ) : activeTab === 'ai-suite' ? (
             <AiProductionSuite
               onOpenProteinIn3D={(proteinTitle) => handleLaunch3DPreset('protein', proteinTitle)}
             />
@@ -8393,6 +9682,18 @@ export default function App() {
         onRegister={handleRegisterFreeBusiness}
         isSubmitting={isSubmittingRegistration}
         lastRegistered={lastRegisteredEntry}
+      />
+
+      <BuyTokensSubscriptionModal
+        isOpen={isSubscriptionModalOpen}
+        onClose={() => setIsSubscriptionModalOpen(false)}
+        tokenCreditsBalance={tokenCreditsBalance}
+        preferences={subscriptionPrefs}
+        subscriptions={subscriptions}
+        onUpdatePreferences={handleUpdateSubscriptionPreferences}
+        onSubscribeAndGrantTokens={handleSubscribeAndGrantTokens}
+        isSubmittingSubscription={isSubmittingSubscription}
+        lastGrantedSubscription={lastGrantedSubscription}
       />
     </div>
   );

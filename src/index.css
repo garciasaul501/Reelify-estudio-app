@@ -6,13 +6,42 @@
     --font-sans: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;
     --font-mono: 'JetBrains Mono', monospace;
     --neon-pink: #ff007f;
-    --neon-magenta: #ec4899;
-    --neon-cyan: #00b8d4;
-    --neon-cyan-bright: #00e5ff;
-    --neon-violet: #7c3aed;
-    --neon-lime: #00c853;
+    --neon-pink-vivid: #ff0099;
+    --neon-pink-deep: #c80064;
+    --neon-magenta: #ff1493;
+    --electric-blue: #0051ff;
+    --electric-blue-vivid: #00d4ff;
+    --electric-blue-deep: #0037b3;
+    --neon-cyan: #00b8ff;
+    --neon-cyan-bright: #00f0ff;
+    --neon-violet: #6d28d9;
+    --neon-lime: #00e676;
     --white-bg: #ffffff;
     --white-surface: #f8fafc;
+
+    /* High-Contrast Neon-Pink & Electric-Blue Theme Variables for Studio3DScene */
+    --studio3d-neon-pink: #ff007f;
+    --studio3d-neon-pink-hot: #ff00a0;
+    --studio3d-neon-pink-ink: #b8005c;
+    --studio3d-neon-pink-glow: rgba(255, 0, 127, 0.55);
+    --studio3d-neon-pink-soft: rgba(255, 0, 127, 0.12);
+    --studio3d-electric-blue: #0051ff;
+    --studio3d-electric-blue-bright: #00d4ff;
+    --studio3d-electric-blue-ink: #003bb8;
+    --studio3d-electric-blue-glow: rgba(0, 81, 255, 0.50);
+    --studio3d-electric-cyan-glow: rgba(0, 212, 255, 0.62);
+    --studio3d-electric-blue-soft: rgba(0, 81, 255, 0.10);
+    --studio3d-bg: #ffffff;
+    --studio3d-hud-surface: rgba(255, 255, 255, 0.96);
+    --studio3d-hud-chip: #f0f7ff;
+    --studio3d-border-blue: #0051ff;
+    --studio3d-border-cyan: #00d4ff;
+    --studio3d-border-pink: #ff007f;
+    --studio3d-text-primary: #d10068;
+    --studio3d-text-secondary: #0044dd;
+    --studio3d-gradient-cta: linear-gradient(135deg, #ff007f 0%, #ff00a0 36%, #0051ff 72%, #00d4ff 100%);
+    --studio3d-shadow-hud: 0 14px 34px -6px rgba(0, 81, 255, 0.28), 0 6px 20px -4px rgba(255, 0, 127, 0.30), 0 0 0 1.5px rgba(0, 212, 255, 0.72);
+    --studio3d-shadow-pink: 0 14px 34px -6px rgba(255, 0, 127, 0.34), 0 6px 20px -4px rgba(0, 81, 255, 0.28), 0 0 0 1.5px rgba(255, 0, 127, 0.72);
   }
 
   body {
@@ -24,9 +53,88 @@
 
   h1, h2, h3, .font-display-gold {
     font-family: var(--font-display);
-    color: #ff007f;
+    color: var(--neon-pink);
     letter-spacing: 0.02em;
   }
+}
+
+/* Dedicated High-Contrast Neon-Pink & Electric-Blue Theme for Studio3DScene Container */
+.studio-3d-scene-container {
+  --neon-pink: #ff007f;
+  --neon-magenta: #ff00a0;
+  --neon-cyan: #0051ff;
+  --neon-cyan-bright: #00d4ff;
+  --neon-violet: #003bb8;
+  background:
+    radial-gradient(circle at 14% 10%, var(--studio3d-neon-pink-soft), transparent 38%),
+    radial-gradient(circle at 86% 12%, var(--studio3d-electric-blue-soft), transparent 40%),
+    radial-gradient(circle at 50% 92%, rgba(0, 212, 255, 0.14), transparent 45%),
+    var(--studio3d-bg);
+  color: var(--studio3d-text-primary);
+  box-shadow: inset 0 0 0 2px var(--studio3d-border-cyan), inset 0 0 28px rgba(0, 81, 255, 0.14);
+}
+
+.studio-3d-scene-container .studio-3d-hud-bar {
+  background-color: var(--studio3d-hud-surface) !important;
+  border-color: var(--studio3d-border-blue) !important;
+  box-shadow: var(--studio3d-shadow-hud) !important;
+  color: var(--studio3d-text-primary) !important;
+}
+
+.studio-3d-scene-container .studio-3d-hud-panel-pink {
+  background-color: var(--studio3d-hud-surface) !important;
+  border-color: var(--studio3d-border-pink) !important;
+  box-shadow: var(--studio3d-shadow-pink) !important;
+  color: var(--studio3d-text-primary) !important;
+}
+
+.studio-3d-scene-container .studio-3d-btn-neon {
+  background: var(--studio3d-gradient-cta) !important;
+  color: #ffffff !important;
+  border: 1px solid var(--studio3d-electric-blue-bright) !important;
+  box-shadow: 0 4px 16px var(--studio3d-neon-pink-glow), 0 0 12px var(--studio3d-electric-blue-glow) !important;
+}
+
+.studio-3d-scene-container .studio-3d-btn-neon:hover {
+  filter: brightness(1.08) contrast(1.06);
+  box-shadow: 0 6px 22px var(--studio3d-electric-cyan-glow), 0 0 18px var(--studio3d-neon-pink-glow) !important;
+}
+
+.studio-3d-scene-container .text-fuchsia-600,
+.studio-3d-scene-container .text-fuchsia-700 {
+  color: var(--studio3d-neon-pink) !important;
+}
+
+.studio-3d-scene-container .text-cyan-600,
+.studio-3d-scene-container .text-cyan-700,
+.studio-3d-scene-container .text-violet-700,
+.studio-3d-scene-container .text-violet-600 {
+  color: var(--studio3d-electric-blue) !important;
+}
+
+.studio-3d-scene-container .bg-fuchsia-600 {
+  background-color: var(--studio3d-neon-pink) !important;
+  box-shadow: 0 2px 12px var(--studio3d-neon-pink-glow);
+}
+
+.studio-3d-scene-container .bg-cyan-500,
+.studio-3d-scene-container .bg-violet-600 {
+  background-color: var(--studio3d-electric-blue) !important;
+  box-shadow: 0 2px 12px var(--studio3d-electric-blue-glow);
+}
+
+.studio-3d-scene-container .border-cyan-400,
+.studio-3d-scene-container .border-cyan-300 {
+  border-color: var(--studio3d-electric-blue) !important;
+}
+
+.studio-3d-scene-container .border-fuchsia-400,
+.studio-3d-scene-container .border-fuchsia-500 {
+  border-color: var(--studio3d-neon-pink) !important;
+}
+
+.studio-3d-scene-container input[type="range"] {
+  accent-color: var(--studio3d-neon-pink);
 }
 
 /* White Background + Electric Neon Theme */
@@ -120,28 +228,28 @@
 /* Vibrant Neon Gradient Utilities */
 .text-gold-metallic,
 .text-neon-electric {
-  background: linear-gradient(135deg, #ff007f 0%, #7c3aed 50%, #00b8d4 100%);
+  background: linear-gradient(135deg, #ff007f 0%, #0051ff 55%, #00d4ff 100%);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
 }
 
 .btn-gold-luxury,
 .btn-neon-electric {
-  background: linear-gradient(135deg, #ff007f 0%, #7c3aed 52%, #00e5ff 100%);
+  background: linear-gradient(135deg, #ff007f 0%, #0051ff 55%, #00d4ff 100%);
   color: #ffffff !important;
   font-weight: 700;
-  border: 1px solid rgba(0, 229, 255, 0.75);
-  box-shadow: 0 4px 16px rgba(255, 0, 127, 0.32), 0 0 12px rgba(0, 229, 255, 0.28);
+  border: 1px solid rgba(0, 212, 255, 0.85);
+  box-shadow: 0 4px 16px rgba(255, 0, 127, 0.36), 0 0 12px rgba(0, 81, 255, 0.32);
 }
 
 .btn-gold-luxury:hover,
 .btn-neon-electric:hover {
-  background: linear-gradient(135deg, #00e5ff 0%, #7c3aed 50%, #ff007f 100%);
-  box-shadow: 0 6px 22px rgba(0, 229, 255, 0.45), 0 0 16px rgba(255, 0, 127, 0.38);
+  background: linear-gradient(135deg, #00d4ff 0%, #0051ff 48%, #ff007f 100%);
+  box-shadow: 0 6px 22px rgba(0, 212, 255, 0.48), 0 0 16px rgba(255, 0, 127, 0.42);
 }
 
 .card-gold-luxury {
   background: #ffffff;
-  border: 1.5px solid rgba(0, 229, 255, 0.65);
-  box-shadow: 0 12px 30px -8px rgba(0, 229, 255, 0.20), 0 4px 14px -4px rgba(255, 0, 127, 0.14);
+  border: 1.5px solid rgba(0, 81, 255, 0.68);
+  box-shadow: 0 12px 30px -8px rgba(0, 81, 255, 0.22), 0 4px 14px -4px rgba(255, 0, 127, 0.18);
 }

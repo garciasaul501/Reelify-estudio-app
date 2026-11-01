@@ -65,7 +65,8 @@ service cloud.firestore {
     function isValidRegistration(data) {
       return data.keys().hasAll(['name', 'email', 'targetUrl', 'createdAt'])
         && data.keys().hasOnly([
-          'id', 'userId', 'name', 'email', 'businessName', 'phone', 'planType', 'targetUrl', 'createdAt'
+          'id', 'userId', 'name', 'email', 'businessName', 'phone', 'planType',
+          'tokensGranted', 'priceLabel', 'targetUrl', 'createdAt'
         ])
         && data.name is string && data.name.size() >= 1 && data.name.size() <= 120
         && data.email is string && data.email.size() >= 3 && data.email.size() <= 256
@@ -73,7 +74,37 @@ service cloud.firestore {
         && (!('userId' in data) || (data.userId is string && data.userId.size() <= 128))
         && (!('businessName' in data) || (data.businessName is string && data.businessName.size() <= 160))
         && (!('phone' in data) || (data.phone is string && data.phone.size() <= 60))
-        && (!('planType' in data) || (data.planType is string && data.planType.size() <= 80));
+        && (!('planType' in data) || (data.planType is string && data.planType.size() <= 80))
+        && (!('tokensGranted' in data) || (data.tokensGranted is int || data.tokensGranted is float))
+        && (!('priceLabel' in data) || (data.priceLabel is string && data.priceLabel.size() <= 30));
+    }
+
+    function isValidSubscription(data) {
+      return data.keys().hasAll(['userId', 'packageId', 'tokensGranted', 'status', 'createdAt'])
+        && data.keys().hasOnly([
+          'id', 'userId', 'subscriberName', 'subscriberEmail', 'packageId',
+          'priceUsd', 'priceLabel', 'tokensGranted', 'status', 'billingCycle',
+          'pricingMode', 'categories', 'deliveryFormats',
+          'autoGrantCreditsOnSubscribe', 'autoTopUpLowBalance', 'redirectToWhop',
+          'targetUrl', 'createdAt'
+        ])
+        && data.userId == request.auth.uid
+        && data.packageId is string && data.packageId.size() >= 1 && data.packageId.size() <= 40
+        && (data.tokensGranted is int || data.tokensGranted is float)
+        && data.tokensGranted >= 0 && data.tokensGranted <= 10000000
+        && data.status in ['active', 'paused']
+        && (!('subscriberName' in data) || (data.subscriberName is string && data.subscriberName.size() <= 120))
+        && (!('subscriberEmail' in data) || (data.subscriberEmail is string && data.subscriberEmail.size() <= 256))
+        && (!('priceUsd' in data) || (data.priceUsd is int || data.priceUsd is float))
+        && (!('priceLabel' in data) || (data.priceLabel is string && data.priceLabel.size() <= 30))
+        && (!('billingCycle' in data) || data.billingCycle in ['monthly', 'annual', 'one_time'])
+        && (!('pricingMode' in data) || data.pricingMode in ['single_all', 'per_category'])
+        && (!('categories' in data) || (data.categories is list && data.categories.size() <= 10))
+        && (!('deliveryFormats' in data) || (data.deliveryFormats is list && data.deliveryFormats.size() <= 10))
+        && (!('autoGrantCreditsOnSubscribe' in data) || data.autoGrantCreditsOnSubscribe is bool)
+        && (!('autoTopUpLowBalance' in data) || data.autoTopUpLowBalance is bool)
+        && (!('redirectToWhop' in data) || data.redirectToWhop is bool)
+        && (!('targetUrl' in data) || (data.targetUrl is string && data.targetUrl.size() <= 200));
     }
 
     // --- Collection Rules ---
@@ -105,6 +136,25 @@ service cloud.firestore {
         && isValidRegistration(incoming())
         && incoming().userId == request.auth.uid
         && incoming().createdAt == request.time;
+      allow delete: if isSignedIn() && (existing().userId == request.auth.uid || isAdmin());
+    }
+
+    match /subscriptions/{subscriptionId} {
+      allow list, get: if isSignedIn() && (resource.data.userId == request.auth.uid || isAdmin());
+      allow create: if isSignedIn()
+        && isValidSubscription(incoming())
+        && incoming().userId == request.auth.uid
+        && incoming().createdAt == request.time;
+      allow update: if isSignedIn()
+        && isOwner(existing().userId)
+        && isValidSubscription(incoming())
+        && incoming().userId == existing().userId
+        && incoming().createdAt == existing().createdAt
+        && incoming().diff(existing()).affectedKeys().hasOnly([
+          'status', 'billingCycle', 'pricingMode', 'categories', 'deliveryFormats',
+          'autoGrantCreditsOnSubscribe', 'autoTopUpLowBalance', 'redirectToWhop',
+          'packageId', 'priceUsd', 'priceLabel', 'tokensGranted'
+        ]);
       allow delete: if isSignedIn() && (existing().userId == request.auth.uid || isAdmin());
     }
   }

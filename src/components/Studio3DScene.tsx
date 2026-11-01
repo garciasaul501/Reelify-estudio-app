@@ -2829,7 +2829,7 @@ export default function Studio3DScene({
       }}
       onDragLeave={() => setIsDraggingVideoOver3D(false)}
       onDrop={handleDropVideoOn3DStage}
-      className="relative w-screen h-screen overflow-hidden bg-white text-fuchsia-600 select-none"
+      className="studio-3d-scene-container relative w-screen h-screen overflow-hidden bg-white text-fuchsia-600 select-none"
     >
       {/* Hidden Audio Element for AI Generated Music & Web Audio API Beat Analyzer */}
       <audio
@@ -2856,8 +2856,7 @@ export default function Studio3DScene({
       {/* Drag & Drop Video Overlay */}
       {isDraggingVideoOver3D && (
         <div
-          style={{ backgroundColor: 'rgba(255, 255, 255, 0.92)' }}
-          className="absolute inset-4 z-30 rounded-2xl border-2 border-dashed border-fuchsia-500 flex flex-col items-center justify-center gap-3 pointer-events-none shadow-2xl"
+          className="studio-3d-hud-panel-pink absolute inset-4 z-30 rounded-2xl border-2 border-dashed border-fuchsia-500 flex flex-col items-center justify-center gap-3 pointer-events-none shadow-2xl"
         >
           <Upload className="w-12 h-12 text-fuchsia-600" />
           <p className="text-xl font-bold text-fuchsia-600 font-display-gold">
@@ -2871,8 +2870,7 @@ export default function Studio3DScene({
 
       {/* Top Bar Contract: White Background & Electric Neon 3 Zones */}
       <header
-        style={{ backgroundColor: 'rgba(255, 255, 255, 0.95)' }}
-        className="absolute top-4 left-6 right-6 z-10 flex items-center justify-between gap-4 px-5 py-3 rounded-xl border-2 border-cyan-400 text-fuchsia-600 pointer-events-auto shadow-xl"
+        className="studio-3d-hud-bar absolute top-4 left-6 right-6 z-10 flex items-center justify-between gap-4 px-5 py-3 rounded-xl border-2 border-cyan-400 text-fuchsia-600 pointer-events-auto shadow-xl"
       >
         {/* Zone 1: Brand Wordmark */}
         <div className="flex items-center gap-2.5 whitespace-nowrap shrink-0">
@@ -2927,7 +2925,7 @@ export default function Studio3DScene({
             </div>
           ) : (
             <span className="text-cyan-700 font-semibold">
-              Estudio 3D Fondo Blanco & Neón · Partículas 3D Rítmicas + Fondo Dinámico
+              Estudio 3D Neón-Rosa & Azul Eléctrico · Partículas 3D Rítmicas + Fondo Dinámico
             </span>
           )}
         </div>
@@ -2938,7 +2936,7 @@ export default function Studio3DScene({
             type="button"
             disabled={isGeneratingMusic}
             onClick={handleGenerateAndPlayRhythmMusic}
-            className="px-2.5 py-1.5 text-xs font-extrabold text-white bg-gradient-to-r from-fuchsia-600 via-violet-600 to-cyan-500 hover:from-fuchsia-500 hover:to-cyan-400 rounded-lg transition-all flex items-center gap-1 whitespace-nowrap shrink-0 shadow-md disabled:opacity-60"
+            className="studio-3d-btn-neon px-2.5 py-1.5 text-xs font-extrabold text-white rounded-lg transition-all flex items-center gap-1 whitespace-nowrap shrink-0 shadow-md disabled:opacity-60"
             title="Generar música con IA (Lyria) y hacer que las partículas 3D reaccionen al ritmo automáticamente"
           >
             {isGeneratingMusic ? (
@@ -3065,14 +3063,13 @@ export default function Studio3DScene({
       {/* Active Scene Text Creator, 3D Audio-Reactive Particle Controls & Dynamic Video Background Strip */}
       {!isDockCollapsed && (
         <div
-          style={{ backgroundColor: 'rgba(255, 255, 255, 0.95)' }}
-          className="absolute top-20 left-1/2 -translate-x-1/2 z-10 max-w-4xl w-[95vw] px-4 py-3 rounded-xl border-2 border-fuchsia-400 pointer-events-auto space-y-2.5 shadow-xl"
+          className="studio-3d-hud-panel-pink absolute top-20 left-1/2 -translate-x-1/2 z-10 max-w-4xl w-[95vw] px-4 py-3 rounded-xl border-2 border-fuchsia-400 pointer-events-auto space-y-2.5 shadow-xl"
         >
           <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
             <span className="text-fuchsia-600 font-bold font-mono tabular-nums flex items-center gap-1.5">
               <VolumeX className="w-3.5 h-3.5 text-cyan-600" />
               <span>
-                Estudio 3D Neón & Blanco · Escena {activeSceneIndex + 1}/{Math.max(1, localScenes.length)} · 3D: {subjectPreset.toUpperCase()}
+                Estudio 3D Neón-Rosa & Azul Eléctrico · Escena {activeSceneIndex + 1}/{Math.max(1, localScenes.length)} · 3D: {subjectPreset.toUpperCase()}
               </span>
             </span>
 
@@ -3252,7 +3249,7 @@ export default function Studio3DScene({
             <button
               type="button"
               onClick={handleCreateScenarioText}
-              className="px-3 py-1.5 rounded-lg bg-gradient-to-r from-fuchsia-600 via-violet-600 to-cyan-500 hover:from-fuchsia-500 hover:to-cyan-400 text-white text-xs font-bold flex items-center gap-1.5 whitespace-nowrap shrink-0 transition-all shadow-md"
+              className="studio-3d-btn-neon px-3 py-1.5 rounded-lg text-white text-xs font-bold flex items-center gap-1.5 whitespace-nowrap shrink-0 transition-all shadow-md"
               title="Crear y aplicar letras neón en pantalla al escenario 3D actual"
             >
               {textFeedback ? <Check className="w-3.5 h-3.5 text-white" /> : <TypeIcon className="w-3.5 h-3.5 text-white" />}
@@ -3343,7 +3340,7 @@ export default function Studio3DScene({
                 type="button"
                 disabled={isStitchingAiPhotos}
                 onClick={() => handleStitchAndSpinWithAI(false)}
-                className="px-2.5 py-1 rounded-lg bg-gradient-to-r from-fuchsia-600 via-violet-600 to-cyan-500 hover:from-fuchsia-500 hover:to-cyan-400 text-white text-[11px] font-extrabold flex items-center gap-1 shadow-xs disabled:opacity-60"
+                className="studio-3d-btn-neon px-2.5 py-1 rounded-lg text-white text-[11px] font-extrabold flex items-center gap-1 shadow-xs disabled:opacity-60"
                 title="Juntar todas las fotos y girarlas automáticamente en 3D con la IA"
               >
                 {isStitchingAiPhotos ? (
@@ -3386,19 +3383,11 @@ export default function Studio3DScene({
 
       {/* Unified Collapsible Bottom Control Dock */}
       <div
-        style={{
-          bottom: '20px',
-          left: '50%',
-          transform: 'translateX(-50%)',
-          maxWidth: 'min(1080px, 95vw)',
-          width: '100%',
-        }}
-        className="absolute z-10 flex flex-col items-center pointer-events-auto"
+        className="absolute bottom-5 left-1/2 -translate-x-1/2 max-w-[min(1080px,95vw)] w-full z-10 flex flex-col items-center pointer-events-auto"
       >
         <button
           onClick={() => setIsDockCollapsed((prev) => !prev)}
-          style={{ backgroundColor: 'rgba(255, 255, 255, 0.95)' }}
-          className="px-3.5 py-1 rounded-t-lg border-2 border-b-0 border-cyan-400 text-xs font-bold text-fuchsia-600 hover:text-violet-700 flex items-center gap-1.5 transition-colors whitespace-nowrap"
+          className="studio-3d-hud-bar px-3.5 py-1 rounded-t-lg border-2 border-b-0 border-cyan-400 text-xs font-bold text-fuchsia-600 hover:text-violet-700 flex items-center gap-1.5 transition-colors whitespace-nowrap"
         >
           {isDockCollapsed ? (
             <>
@@ -3415,14 +3404,13 @@ export default function Studio3DScene({
 
         {!isDockCollapsed && (
           <div
-            style={{ backgroundColor: 'rgba(255, 255, 255, 0.95)' }}
-            className="w-full rounded-xl border-2 border-cyan-400 px-4 py-3 text-fuchsia-600 shadow-2xl flex flex-wrap items-center justify-between gap-3"
+            className="studio-3d-hud-bar w-full rounded-xl border-2 border-cyan-400 px-4 py-3 text-fuchsia-600 shadow-2xl flex flex-wrap items-center justify-between gap-3"
           >
             {/* 1. Preview Playback & 5 Stage 3D Scene Subjects */}
             <div className="flex items-center gap-2">
               <button
                 onClick={() => setIsPlaying((prev) => !prev)}
-                className="px-3 py-1.5 rounded-lg bg-gradient-to-r from-fuchsia-600 via-violet-600 to-cyan-500 hover:from-fuchsia-500 hover:to-cyan-400 text-white text-xs font-bold flex items-center gap-1.5 transition-all whitespace-nowrap shrink-0 shadow-sm"
+                className="studio-3d-btn-neon px-3 py-1.5 rounded-lg text-white text-xs font-bold flex items-center gap-1.5 transition-all whitespace-nowrap shrink-0 shadow-sm"
               >
                 {isPlaying ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}
                 {isPlaying ? 'Pausar 3D' : 'Reproducir 3D'}

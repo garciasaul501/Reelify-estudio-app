@@ -1053,7 +1053,7 @@ Devuelve un JSON en español con:
     });
   });
 
-  // Free Business Registrations Endpoint -> Directs every registration to https://whop.com/@saulmente
+  // Free Business Registrations & Subscription Token Credits Endpoint -> Directs to https://whop.com/@saulmente
   const WHOP_TARGET_URL = 'https://whop.com/@saulmente';
   const serverRegistrations: Array<{
     id: string;
@@ -1062,6 +1062,29 @@ Devuelve un JSON en español con:
     businessName: string;
     phone?: string;
     planType: string;
+    tokensGranted?: number;
+    priceLabel?: string;
+    targetUrl: string;
+    createdAtIso: string;
+  }> = [];
+
+  const serverSubscriptions: Array<{
+    id: string;
+    userId: string;
+    subscriberName: string;
+    subscriberEmail: string;
+    packageId: string;
+    priceUsd: number;
+    priceLabel: string;
+    tokensGranted: number;
+    status: 'active' | 'paused';
+    billingCycle: 'monthly' | 'annual' | 'one_time';
+    pricingMode: 'single_all' | 'per_category';
+    categories: string[];
+    deliveryFormats: string[];
+    autoGrantCreditsOnSubscribe: boolean;
+    autoTopUpLowBalance: boolean;
+    redirectToWhop: boolean;
     targetUrl: string;
     createdAtIso: string;
   }> = [];
@@ -1075,12 +1098,14 @@ Devuelve un JSON en español con:
   });
 
   app.post('/api/registrations', (req, res) => {
-    const { name, email, businessName, phone, planType } = req.body || {};
+    const { name, email, businessName, phone, planType, tokensGranted, priceLabel } = req.body || {};
     const cleanName = typeof name === 'string' ? name.trim() : '';
     const cleanEmail = typeof email === 'string' ? email.trim() : '';
     if (!cleanName || !cleanEmail) {
       return res.status(400).json({ error: 'Nombre y correo electrónico son obligatorios.' });
     }
+
+    const granted = typeof tokensGranted === 'number' && tokensGranted > 0 ? tokensGranted : 62500;
 
     const entry = {
       id: `reg-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
@@ -1089,6 +1114,8 @@ Devuelve un JSON en español con:
       businessName: typeof businessName === 'string' && businessName.trim() ? businessName.trim().slice(0, 160) : 'Mi Negocio',
       phone: typeof phone === 'string' ? phone.trim().slice(0, 60) : '',
       planType: typeof planType === 'string' && planType.trim() ? planType.trim().slice(0, 80) : 'Acceso Gratis Total · Negocio',
+      tokensGranted: granted,
+      priceLabel: typeof priceLabel === 'string' ? priceLabel.slice(0, 30) : '$5.00',
       targetUrl: WHOP_TARGET_URL,
       createdAtIso: new Date().toISOString(),
     };
@@ -1102,6 +1129,69 @@ Devuelve un JSON en español con:
       success: true,
       redirectUrl: WHOP_TARGET_URL,
       registration: entry,
+    });
+  });
+
+  app.get('/api/subscriptions', (_req, res) => {
+    res.json({
+      success: true,
+      targetUrl: WHOP_TARGET_URL,
+      subscriptions: serverSubscriptions,
+    });
+  });
+
+  app.post('/api/subscriptions', (req, res) => {
+    const body = req.body || {};
+    const tokensGranted =
+      typeof body.tokensGranted === 'number' && body.tokensGranted > 0 ? body.tokensGranted : 62500;
+    const priceUsd = typeof body.priceUsd === 'number' && body.priceUsd >= 0 ? body.priceUsd : 5;
+    const entry = {
+      id: `sub-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+      userId: typeof body.userId === 'string' ? body.userId.slice(0, 128) : 'guest',
+      subscriberName:
+        typeof body.subscriberName === 'string' && body.subscriberName.trim()
+          ? body.subscriberName.trim().slice(0, 120)
+          : 'Suscriptor Reelify',
+      subscriberEmail:
+        typeof body.subscriberEmail === 'string' && body.subscriberEmail.trim()
+          ? body.subscriberEmail.trim().slice(0, 256)
+          : 'suscriptor@reelify.ai',
+      packageId: typeof body.packageId === 'string' ? body.packageId.slice(0, 40) : 'tier-5',
+      priceUsd,
+      priceLabel:
+        typeof body.priceLabel === 'string' && body.priceLabel.trim()
+          ? body.priceLabel.trim().slice(0, 30)
+          : `$${priceUsd.toFixed(2)}`,
+      tokensGranted,
+      status: (body.status === 'paused' ? 'paused' : 'active') as 'active' | 'paused',
+      billingCycle: (
+        body.billingCycle === 'annual' || body.billingCycle === 'one_time' ? body.billingCycle : 'monthly'
+      ) as 'monthly' | 'annual' | 'one_time',
+      pricingMode: (body.pricingMode === 'per_category' ? 'per_category' : 'single_all') as
+        | 'single_all'
+        | 'per_category',
+      categories: Array.isArray(body.categories)
+        ? body.categories.map((c: any) => String(c).slice(0, 60)).slice(0, 10)
+        : ['Presentaciones', 'Redes Sociales', 'Landing Pages', 'Mockups', 'Logos Animados'],
+      deliveryFormats: Array.isArray(body.deliveryFormats)
+        ? body.deliveryFormats.map((f: any) => String(f).slice(0, 40)).slice(0, 10)
+        : ['Canva', 'Figma', 'Estudio 3D', 'MP4 / MP3'],
+      autoGrantCreditsOnSubscribe: body.autoGrantCreditsOnSubscribe !== false,
+      autoTopUpLowBalance: Boolean(body.autoTopUpLowBalance),
+      redirectToWhop: body.redirectToWhop !== false,
+      targetUrl: WHOP_TARGET_URL,
+      createdAtIso: new Date().toISOString(),
+    };
+
+    serverSubscriptions.unshift(entry);
+    if (serverSubscriptions.length > 200) {
+      serverSubscriptions.pop();
+    }
+
+    return res.json({
+      success: true,
+      redirectUrl: WHOP_TARGET_URL,
+      subscription: entry,
     });
   });
 
