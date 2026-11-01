@@ -647,10 +647,10 @@ function renderSceneTransitionOnCanvas(params: {
   const basePanX = dir * (sceneLocalProgress - 0.5) * 26;
   const basePanY = -dir * (sceneLocalProgress - 0.5) * 12;
 
-  // Fraction of the scene occupied by the outgoing transition (clamped between 12% and 45% of scene duration)
-  const effectiveTransSec = Math.max(0.2, Math.min(sceneDurationSec * 0.45, transitionDurationSec || 0.8));
+  // Fraction of the scene occupied by the outgoing transition (supports custom per-scene durations from 0.1s to 3.0s)
+  const effectiveTransSec = Math.max(0.1, Math.min(sceneDurationSec * 0.85, transitionDurationSec ?? 0.8));
   const transFraction =
-    transitionType === 'none' ? 0 : Math.max(0.12, Math.min(0.45, effectiveTransSec / Math.max(1, sceneDurationSec)));
+    transitionType === 'none' ? 0 : Math.max(0.05, Math.min(0.85, effectiveTransSec / Math.max(0.5, sceneDurationSec)));
   const transStart = 1 - transFraction;
 
   if (transitionType === 'none' || sceneLocalProgress <= transStart || currentImg === nextImg) {
@@ -1654,7 +1654,8 @@ const ProceduralVideoCanvas = ({
       ctx.font = 'bold 12px "JetBrains Mono", monospace';
       const presetBadge = activeScene.scene3dPreset ? ` · 3D: ${activeScene.scene3dPreset.toUpperCase()}` : '';
       const transitionMeta = getSceneTransitionPreset(activeScene.transition || 'dissolve');
-      const transBadge = ` · TRANSICIÓN: ${transitionMeta.badge} ${transitionMeta.shortLabel.toUpperCase()}`;
+      const transDurSec = activeScene.transitionDurationSec ?? 0.8;
+      const transBadge = ` · TRANSICIÓN: ${transitionMeta.badge} ${transitionMeta.shortLabel.toUpperCase()} (${transDurSec.toFixed(1)}s)`;
       const filterBadge = activeFilterPreset.id !== 'none' ? ` · FILTER: ${activeFilterPreset.label.toUpperCase()}` : '';
       ctx.fillText(
         `ESCENA ${sceneIdx + 1}/${scenes.length} (${activeScene.duration})${presetBadge}${transBadge}${filterBadge}`,
@@ -6444,6 +6445,9 @@ export default function App() {
   } | null>(null);
   const viralPhotoInputRef = useRef<HTMLInputElement | null>(null);
   const viralVideoInputRef = useRef<HTMLInputElement | null>(null);
+  const [showLearningGuide, setShowLearningGuide] = useState<boolean>(true);
+  const [activeLearningStep, setActiveLearningStep] = useState<number>(0);
+  const [isGeneratingAllExamples, setIsGeneratingAllExamples] = useState<boolean>(false);
 
   // Free Business Registration State (Directed to https://whop.com/@saulmente)
   const [localRegistrations, setLocalRegistrations] = useState<FreeBusinessRegistration[]>(() =>
@@ -7489,6 +7493,435 @@ export default function App() {
     }
   };
 
+  // --- CURATED AI EXAMPLE VIDEOS & INTERACTIVE LEARNING GUIDE MODULES ---
+  const AI_EXAMPLE_VIDEOS_AND_LESSONS: Array<{
+    id: string;
+    stepNumber: number;
+    badge: string;
+    title: string;
+    shortTitle: string;
+    formulaId: string;
+    aspectRatio: '9:16' | '16:9';
+    preset: SubjectPresetId;
+    viralHook: string;
+    viralCta: string;
+    hashtags: string;
+    prompt: string;
+    transcript: string;
+    guideGoal: string;
+    guideSteps: string[];
+    scenes: Array<{
+      description: string;
+      overlayText: string;
+      duration: string;
+      scene3dPreset: SubjectPresetId;
+      transition: SceneTransitionId;
+      transitionDurationSec: number;
+    }>;
+  }> = [
+    {
+      id: 'ejemplo-1-reel-ventas',
+      stepNumber: 1,
+      badge: '🔥 Lección 1',
+      title: 'Ejemplo IA #1: Reel Viral de Ventas y Negocio en 1 Clic (9:16)',
+      shortTitle: 'Reel Viral Ventas',
+      formulaId: 'reel-ventas',
+      aspectRatio: '9:16',
+      preset: 'coupe',
+      viralHook: '🔥 ¿Quieres multiplicar tus ventas con videos 3D creados por IA en 10 segundos?',
+      viralCta: '🚀 Regístrate gratis hoy en whop.com/@saulmente y reclama +62,500 tokens',
+      hashtags: '#VentasVirales #NegocioIA #Reels3D #MarketingDigital #Whop',
+      prompt: 'Cómo multiplicar las ventas de tu negocio usando videos 3D virales e inteligencia artificial en segundos',
+      transcript:
+        '[Escena 1 - 0:00] ¿Sigues perdiendo horas editando videos para tu negocio? [Escena 2 - 0:04] Con nuestra Inteligencia Artificial escribes tu idea y generas escenas 3D al instante. [Escena 3 - 0:08] Cada escena incluye subtítulos virales y transiciones profesionales automáticas. [Escena 4 - 0:12] ¡Empieza gratis ahora en whop.com/@saulmente y recibe 62,500 tokens!',
+      guideGoal: 'Aprende a crear un video viral completo desde una simple idea escrita o dictada por voz en 1 clic.',
+      guideSteps: [
+        'Paso 1: Elige una de las 6 Fórmulas Virales arriba (por ejemplo "🔥 Reel de Ventas Viral") o escribe tu idea en el cuadro de texto.',
+        'Paso 2: Si prefieres hablar, presiona el botón "🎤 Dictar con Voz" y di de qué trata tu producto o servicio.',
+        'Paso 3: Haz clic en el botón grande "⚡ CREAR Y TRANSCRIBIR VIDEO VIRAL IA (1 CLIC)". La IA creará las 4 escenas, el guion y el video listo para descargar en .MP4.',
+      ],
+      scenes: [
+        {
+          description: 'Apertura impactante con Aero Coupé 3D bajo luces de neón cian y fucsia.',
+          overlayText: '🔥 ¿PIERDES HORAS EDITANDO VIDEOS PARA TU NEGOCIO?',
+          duration: '3.5s',
+          scene3dPreset: 'coupe',
+          transition: 'zoom-cut',
+          transitionDurationSec: 0.6,
+        },
+        {
+          description: 'Demostración dinámica en Estación Orbital 3D generando escenas con IA.',
+          overlayText: '⚡ ESCRIBE TU IDEA Y LA IA CREA ESCENAS 3D AL INSTANTE',
+          duration: '4s',
+          scene3dPreset: 'station',
+          transition: 'slide-up',
+          transitionDurationSec: 0.9,
+        },
+        {
+          description: 'Vuelo cinematográfico en Cine Drone 3D mostrando subtítulos y transiciones.',
+          overlayText: '🎬 SUBTÍTULOS VIRALES + TRANSICIONES AUTOMÁTICAS',
+          duration: '4s',
+          scene3dPreset: 'drone',
+          transition: 'neon-flash',
+          transitionDurationSec: 0.7,
+        },
+        {
+          description: 'Cierre de alta conversión con escultura cibernética 3D e invitación a Whop.',
+          overlayText: '🚀 REGÍSTRATE GRATIS EN WHOP.COM/@SAULMENTE (+62,500 TOKens)',
+          duration: '4s',
+          scene3dPreset: 'sculpture',
+          transition: 'wipe-radial',
+          transitionDurationSec: 1.2,
+        },
+      ],
+    },
+    {
+      id: 'ejemplo-2-transcribir-video-3d',
+      stepNumber: 2,
+      badge: '🎬 Lección 2',
+      title: 'Ejemplo IA #2: Video Transcrito y Regenerado en Escenas 3D (Opción 3)',
+      shortTitle: 'Transcribir Video a 3D',
+      formulaId: 'lanzamiento-3d',
+      aspectRatio: '16:9',
+      preset: 'station',
+      viralHook: '🎬 Así la IA escucha tu video, transcribe cada frase y lo reconstruye en 3D',
+      viralCta: '✨ Sube tu propio video con el botón "1. Subir Video → 3D IA"',
+      hashtags: '#TranscripcionIA #VideoA3D #Estudio3D #CreadorDeContenido #IA',
+      prompt: 'Transcripción inteligente de un video hablado transformado en 4 escenarios espaciales y tecnológicos 3D',
+      transcript:
+        '[Escena 1 - 0:00] Bienvenidos al estudio de transcripción 3D con Inteligencia Artificial. [Escena 2 - 0:04] Al subir tu archivo MP4 o MOV, la IA detecta cada frase hablada automáticamente. [Escena 3 - 0:08] Luego convierte cada segmento en un escenario 3D interactivo con cámara 360 grados. [Escena 4 - 0:12] Descarga tu nuevo video en MP4 o ábrelo en el Escenario Espacial 3D.',
+      guideGoal: 'Aprende a usar la Opción 3 para subir cualquier video que ya tengas, transcribir su voz con IA y regenerarlo en 3D.',
+      guideSteps: [
+        'Paso 1: En el recuadro "🎬 OPCIÓN 3: Transcribir Video Existente y Regenerarlo en 3D con IA", haz clic en "1. Subir Video → 3D IA" y selecciona tu archivo .MP4 o .MOV.',
+        'Paso 2: Si quieres que la IA invente nuevas tomas visuales 3D para tu video, presiona "2. Regenerar en 3D IA".',
+        'Paso 3: Haz clic en "3. Abrir en Estudio 3D" para girar la cámara 360° alrededor del escenario mientras tu video se reproduce.',
+      ],
+      scenes: [
+        {
+          description: 'Escena 01 transcrita por IA proyectada en la Estación Orbital 3D.',
+          overlayText: '🎙️ "BIENVENIDOS AL ESTUDIO DE TRANSCRIPCIÓN 3D CON IA"',
+          duration: '4s',
+          scene3dPreset: 'station',
+          transition: 'dissolve',
+          transitionDurationSec: 0.8,
+        },
+        {
+          description: 'Escena 02 transcrita: Análisis de voz y extracción de fotogramas en Cine Drone 3D.',
+          overlayText: '🧠 "LA IA DETECTA Y TRANSCRIBE CADA FRASE AUTOMÁTICAMENTE"',
+          duration: '4s',
+          scene3dPreset: 'drone',
+          transition: 'slide-left',
+          transitionDurationSec: 1.0,
+        },
+        {
+          description: 'Escena 03 transcrita: Regeneración visual en Aero Coupé 3D con iluminación neón.',
+          overlayText: '🧊 "CONVIERTE CADA SEGMENTO EN UN ESCENARIO 3D INTERACTIVO"',
+          duration: '4s',
+          scene3dPreset: 'coupe',
+          transition: 'wipe-right',
+          transitionDurationSec: 0.9,
+        },
+        {
+          description: 'Escena 04 transcrita: Estructura molecular AlphaFold 3D y exportación directa a MP4.',
+          overlayText: '📥 "DESCARGA TU VIDEO .MP4 O GÍRALO EN VIVO EN 3D"',
+          duration: '4s',
+          scene3dPreset: 'protein',
+          transition: 'zoom-cut',
+          transitionDurationSec: 0.7,
+        },
+      ],
+    },
+    {
+      id: 'ejemplo-3-fotos-3d',
+      stepNumber: 3,
+      badge: '📸 Lección 3',
+      title: 'Ejemplo IA #3: Fotos Unidas y Girando en el Anillo 3D con Subtítulos IA',
+      shortTitle: 'Fotos a Video 3D',
+      formulaId: 'foto-a-video',
+      aspectRatio: '9:16',
+      preset: 'sculpture',
+      viralHook: '📸 Convierte las fotos de tu galería en un video 3D giratorio con guion IA',
+      viralCta: '🔥 Sube tus fotos con el botón "+ Subir Foto" y gíralas en 3D',
+      hashtags: '#FotosA3D #Catálogo3D #ProductosVirales #IAGenerativa #Reels',
+      prompt: 'Secuencia de fotos de producto unidas en un collage dinámico girando 360 grados con subtítulos virales',
+      transcript:
+        '[Escena 1 - 0:00] Sube una o varias fotos de tu producto, servicio o marca personal. [Escena 2 - 0:04] La IA analiza tus imágenes y redacta subtítulos atractivos para cada toma. [Escena 3 - 0:08] Une todas las fotos en un anillo orbital 3D que gira suavemente. [Escena 4 - 0:12] Exporta tu presentación en video MP4 lista para Instagram, TikTok o WhatsApp.',
+      guideGoal: 'Aprende a transformar fotos estáticas en un video dinámico con narración escrita por IA y rotación 3D.',
+      guideSteps: [
+        'Paso 1: Haz clic en el botón "+ Subir Foto" arriba y selecciona de 1 a 8 fotos de tu teléfono o computadora.',
+        'Paso 2: Presiona "⚡ CREAR Y TRANSCRIBIR VIDEO VIRAL IA (1 CLIC)" para que la IA cree una escena por cada foto.',
+        'Paso 3: Debajo del monitor en vivo, haz clic en "Girar en 3D" para ver todas tus fotos flotando y girando en el escenario 3D.',
+      ],
+      scenes: [
+        {
+          description: 'Presentación visual de foto principal en Escultura Cibernética 3D.',
+          overlayText: '📸 SUBE TUS FOTOS Y CONVIÉRTELAS EN VIDEO VIRAL 3D',
+          duration: '3.5s',
+          scene3dPreset: 'sculpture',
+          transition: 'slide-up',
+          transitionDurationSec: 0.7,
+        },
+        {
+          description: 'Análisis visual IA creando subtítulos de alto impacto comercial.',
+          overlayText: '✨ LA IA REDACTA EL GUION Y SUBTÍTULOS DE CADA FOTO',
+          duration: '3.5s',
+          scene3dPreset: 'coupe',
+          transition: 'dissolve',
+          transitionDurationSec: 1.1,
+        },
+        {
+          description: 'Rotación orbital de múltiples fotografías en el estudio espacial.',
+          overlayText: '🔄 UNE Y GIRA TUS FOTOS 360° EN EL ANILLO ORBITAL 3D',
+          duration: '4s',
+          scene3dPreset: 'station',
+          transition: 'wipe-radial',
+          transitionDurationSec: 1.3,
+        },
+        {
+          description: 'Descarga instantánea en formato vertical 9:16 para redes sociales.',
+          overlayText: '📲 LISTO PARA SUBIR A TIKTOK, REELS Y SHORTS EN .MP4',
+          duration: '3.5s',
+          scene3dPreset: 'drone',
+          transition: 'neon-flash',
+          transitionDurationSec: 0.5,
+        },
+      ],
+    },
+    {
+      id: 'ejemplo-4-transiciones-slider',
+      stepNumber: 4,
+      badge: '🎚️ Lección 4',
+      title: 'Ejemplo IA #4: Película Multi-Escena con Duración de Transición Personalizada',
+      shortTitle: 'Slider Transiciones',
+      formulaId: 'historia-exito',
+      aspectRatio: '16:9',
+      preset: 'drone',
+      viralHook: '🎚️ Domina las transiciones cinematográficas ajustando la duración exacta de cada escena',
+      viralCta: '🎬 Abre "Crear Multi-Escenas" para probar el nuevo slider de 0.1s a 3.0s',
+      hashtags: '#EdicionDeVideo #TransicionesIA #MultiEscenas #Cine3D #Tutorial',
+      prompt: 'Demostración maestra de transiciones Dissolve, Slide, Wipe y Zoom con tiempos personalizados entre cada escena',
+      transcript:
+        '[Escena 1 - Transición Rápida 0.4s] Corte Zoom ultra rápido para captar la atención en el primer segundo. [Escena 2 - Transición Suave 1.2s] Disolvencia cinematográfica suave para explicar los beneficios de tu negocio. [Escena 3 - Transición Dinámica 1.8s] Barrido radial envolvente que conecta con la demostración 3D. [Escena 4 - Cierre Épico 0.8s] Destello neón final con llamado a la acción.',
+      guideGoal: 'Aprende a personalizar el efecto de transición y su velocidad exacta (de 0.1s a 3.0s) en cada escena individualmente.',
+      guideSteps: [
+        'Paso 1: Entra a la pestaña "Crear Multi-Escenas" en el menú izquierdo o haz clic en "Editar Escenas" debajo del monitor.',
+        'Paso 2: En cada escena verás el selector "Transición:" (Dissolve, Slide, Wipe, Zoom, Flash) y a su lado el nuevo control deslizante "Dur. Transición: 0.1s — 3.0s".',
+        'Paso 3: Desliza la barra en cada escena (por ejemplo 0.4s para un cambio rápido o 2.0s para una transición suave) y míralo en vivo en el Monitor de Transiciones.',
+      ],
+      scenes: [
+        {
+          description: 'Escena 01 con transición rápida Zoom Cut de 0.4 segundos.',
+          overlayText: '⚡ ESCENA 1: TRANSICIÓN RÁPIDA ZOOM CUT (0.4s)',
+          duration: '4s',
+          scene3dPreset: 'drone',
+          transition: 'zoom-cut',
+          transitionDurationSec: 0.4,
+        },
+        {
+          description: 'Escena 02 con transición suave Cross Dissolve de 1.2 segundos.',
+          overlayText: '🌊 ESCENA 2: DISOLVENCIA CINEMATOGRÁFICA SUAVE (1.2s)',
+          duration: '4.5s',
+          scene3dPreset: 'station',
+          transition: 'dissolve',
+          transitionDurationSec: 1.2,
+        },
+        {
+          description: 'Escena 03 con barrido Iris Radial Wipe de 1.8 segundos.',
+          overlayText: '◎ ESCENA 3: BARRIDO RADIAL PROGRESIVO (1.8s)',
+          duration: '4.5s',
+          scene3dPreset: 'protein',
+          transition: 'wipe-radial',
+          transitionDurationSec: 1.8,
+        },
+        {
+          description: 'Escena 04 con destello Neon Flash de 0.8 segundos.',
+          overlayText: '✦ ESCENA 4: DESTELLO NEÓN FINAL DE IMPACTO (0.8s)',
+          duration: '4s',
+          scene3dPreset: 'coupe',
+          transition: 'neon-flash',
+          transitionDurationSec: 0.8,
+        },
+      ],
+    },
+    {
+      id: 'ejemplo-5-negocio-whop-paypal',
+      stepNumber: 5,
+      badge: '💰 Lección 5',
+      title: 'Ejemplo IA #5: Embudo Viral para Suscriptores en Whop y Pagos en PayPal',
+      shortTitle: 'Monetizar Negocio',
+      formulaId: 'oferta-whop',
+      aspectRatio: '9:16',
+      preset: 'coupe',
+      viralHook: '💰 Únete gratis hoy a nuestra comunidad oficial y desbloquea +62,500 tokens IA',
+      viralCta: '👉 Entra ahora a https://whop.com/@saulmente o activa tu plan Pro con PayPal',
+      hashtags: '#Whop #MonetizarConIA #NegocioDigital #IngresosOnline #PayPal',
+      prompt: 'Video promocional para invitar suscriptores gratis a whop.com/@saulmente y convertir clientes con pagos seguros PayPal',
+      transcript:
+        '[Escena 1 - 0:00] ¡Atención creadores y emprendedores! Ya está abierto el acceso gratuito a nuestra plataforma de Video IA. [Escena 2 - 0:04] Al registrarte gratis recibes 62,500 tokens instantáneos y acceso directo a whop.com/@saulmente. [Escena 3 - 0:08] Crea videos virales, transcribe escenas en 3D y descarga archivos MP4 y MP3 ilimitados. [Escena 4 - 0:12] Regístrate gratis hoy o actualiza tu plan de forma 100% segura con PayPal.',
+      guideGoal: 'Aprende cómo funciona el sistema de monetización de tu negocio con registro gratuito en Whop y cobros protegidos en PayPal.',
+      guideSteps: [
+        'Paso 1: Cuando un visitante llena su nombre y correo en "Registro Gratis · +62,500 Tokens", recibe sus tokens y es dirigido automáticamente a tu cuenta https://whop.com/@saulmente.',
+        'Paso 2: Si deseas ver la lista de todas las personas registradas y exportarlas en Excel (.CSV), ve a "Mis Suscripciones" en el menú izquierdo.',
+        'Paso 3: Cuando un cliente compra paquetes de tokens o suscripción en PayPal, el pago llega directo a tu cuenta PayPal protegida (gar***@hotmail.com nunca se exhibe públicamente).',
+      ],
+      scenes: [
+        {
+          description: 'Invitación VIP en escenario Aero Coupé 3D para nuevos suscriptores.',
+          overlayText: '🎁 ACCESO GRATIS + 62,500 TOKENS DE BIENVENIDA',
+          duration: '3.5s',
+          scene3dPreset: 'coupe',
+          transition: 'zoom-cut',
+          transitionDurationSec: 0.6,
+        },
+        {
+          description: 'Comunidad exclusiva en Whop (@saulmente) proyectada en Estación Orbital 3D.',
+          overlayText: '🌐 ÚNETE A NUESTRA COMUNIDAD EN WHOP.COM/@SAULMENTE',
+          duration: '4s',
+          scene3dPreset: 'station',
+          transition: 'slide-left',
+          transitionDurationSec: 0.8,
+        },
+        {
+          description: 'Demostración de herramientas de creación MP4, MP3 y transcripción 3D.',
+          overlayText: '🎬 CREA VIDEOS VIRALES, MP4, MP3 Y ESCENAS 3D CON IA',
+          duration: '4s',
+          scene3dPreset: 'sculpture',
+          transition: 'wipe-right',
+          transitionDurationSec: 0.9,
+        },
+        {
+          description: 'Cierre de monetización segura con PayPal Checkout.',
+          overlayText: '💳 RECARGA TOKENS Y PLANES PRO CON PAYPAL 100% SEGURO',
+          duration: '4s',
+          scene3dPreset: 'drone',
+          transition: 'neon-flash',
+          transitionDurationSec: 0.7,
+        },
+      ],
+    },
+  ];
+
+  const buildVideoProjectFromExample = (
+    ex: (typeof AI_EXAMPLE_VIDEOS_AND_LESSONS)[number],
+    customScenes?: Scene[],
+    customTranscript?: string
+  ): VideoProject => {
+    const finalScenes: Scene[] =
+      customScenes && customScenes.length > 0
+        ? customScenes
+        : ex.scenes.map((sc, idx) => {
+            const imgUrl = createSampleSceneDataUrl(
+              sc.scene3dPreset,
+              `Ejemplo ${ex.stepNumber} · Escena 0${idx + 1}`
+            );
+            return {
+              description: sc.description,
+              overlayText: sc.overlayText,
+              duration: sc.duration,
+              scene3dPreset: sc.scene3dPreset,
+              transition: sc.transition,
+              transitionDurationSec: sc.transitionDurationSec,
+              imageUrl: imgUrl,
+              images: [imgUrl],
+            };
+          });
+    const allImgs = finalScenes.map((s) => s.imageUrl).filter((u): u is string => Boolean(u));
+    const totalSec = getTotalScenesDurationSeconds(finalScenes, '15s');
+    return {
+      id: `ai-example-${ex.id}-${Date.now()}`,
+      userId: user ? user.uid : 'local-studio',
+      title: ex.title,
+      prompt: ex.prompt,
+      folder: 'Ejemplos IA & Guía',
+      scene3dPreset: ex.preset,
+      images: allImgs,
+      referenceImage: allImgs[0],
+      script: customTranscript || ex.transcript,
+      customTextOverlay: ex.viralHook,
+      scenes: finalScenes,
+      status: 'completed',
+      aspectRatio: ex.aspectRatio,
+      duration: `${totalSec}s`,
+      createdAt: { seconds: Math.floor(Date.now() / 1000) },
+    };
+  };
+
+  const handleLoadOrGenerateExampleVideo = async (exampleIdx: number, generateFreshWithAi = false) => {
+    const ex = AI_EXAMPLE_VIDEOS_AND_LESSONS[exampleIdx] || AI_EXAMPLE_VIDEOS_AND_LESSONS[0];
+    setActiveLearningStep(exampleIdx);
+    setViralFormulaId(ex.formulaId);
+    setQuickPrompt(ex.prompt);
+    setPrompt(ex.prompt);
+    setAspectRatio(ex.aspectRatio);
+    setSelected3DPresetForCreate(ex.preset);
+
+    if (generateFreshWithAi) {
+      await handleViralExpressCreate(ex.formulaId, ex.prompt);
+      return;
+    }
+
+    const exampleProj = buildVideoProjectFromExample(ex);
+    await persistVideoProject(exampleProj);
+    setActiveStudioProject(exampleProj);
+    setDraftScenes(exampleProj.scenes || []);
+    setProjectTitle(exampleProj.title);
+    setActiveTextOverlay(ex.transcript);
+    setViralExpressResult({
+      title: exampleProj.title,
+      viralHook: ex.viralHook,
+      viralCta: ex.viralCta,
+      hashtags: ex.hashtags,
+      transcript: ex.transcript,
+      project: exampleProj,
+    });
+    setSaveBannerMessage(
+      `¡${ex.title} cargado en el Monitor en Vivo y guardado en tu carpeta "Ejemplos IA & Guía"!`
+    );
+    setTimeout(() => setSaveBannerMessage(null), 4500);
+  };
+
+  const handleGenerateAllExampleVideosWithAI = async () => {
+    if (isGeneratingAllExamples) return;
+    setIsGeneratingAllExamples(true);
+    setError(null);
+    try {
+      let firstCreated: VideoProject | null = null;
+      for (let i = 0; i < AI_EXAMPLE_VIDEOS_AND_LESSONS.length; i++) {
+        const ex = AI_EXAMPLE_VIDEOS_AND_LESSONS[i];
+        const proj = buildVideoProjectFromExample(ex);
+        await persistVideoProject(proj);
+        if (i === 0) {
+          firstCreated = proj;
+        }
+      }
+      if (firstCreated) {
+        const ex0 = AI_EXAMPLE_VIDEOS_AND_LESSONS[0];
+        setActiveStudioProject(firstCreated);
+        setDraftScenes(firstCreated.scenes || []);
+        setProjectTitle(firstCreated.title);
+        setViralExpressResult({
+          title: firstCreated.title,
+          viralHook: ex0.viralHook,
+          viralCta: ex0.viralCta,
+          hashtags: ex0.hashtags,
+          transcript: ex0.transcript,
+          project: firstCreated,
+        });
+      }
+      // Also trigger live AI generation for the currently selected lesson so the user gets a fresh AI-generated example
+      const activeEx = AI_EXAMPLE_VIDEOS_AND_LESSONS[activeLearningStep] || AI_EXAMPLE_VIDEOS_AND_LESSONS[0];
+      await handleViralExpressCreate(activeEx.formulaId, activeEx.prompt);
+      setSaveBannerMessage(
+        '¡Los 5 Videos de Ejemplo con IA fueron generados y guardados en tu biblioteca ("Ejemplos IA & Guía")!'
+      );
+      setTimeout(() => setSaveBannerMessage(null), 5000);
+    } catch (err: any) {
+      setError(err.message || 'Error al generar la colección de videos de ejemplo.');
+    } finally {
+      setIsGeneratingAllExamples(false);
+    }
+  };
+
   const renderViralExpressCreatorCard = () => {
     const activeFormula =
       VIRAL_EXPRESS_FORMULAS.find((f) => f.id === viralFormulaId) || VIRAL_EXPRESS_FORMULAS[0];
@@ -7530,8 +7963,42 @@ export default function App() {
             </p>
           </div>
 
-          {/* Toggle between Simple Fast Mode and Full Studio Mode */}
+          {/* Toggle Learning Guide + Generate All Examples + Simple/Complete Mode */}
           <div className="flex flex-wrap items-center gap-2 shrink-0">
+            <button
+              type="button"
+              onClick={() => setShowLearningGuide((prev) => !prev)}
+              className={`px-3.5 py-2 rounded-xl text-xs font-extrabold flex items-center gap-1.5 border transition-all cursor-pointer ${
+                showLearningGuide
+                  ? 'bg-fuchsia-600 text-white border-fuchsia-400 shadow-sm'
+                  : 'bg-slate-800 text-cyan-300 border-cyan-500/50 hover:bg-slate-700'
+              }`}
+              title="Abrir o cerrar la Guía de Aprendizaje Interactiva y los Videos de Ejemplo con IA"
+            >
+              <Sparkles className="w-3.5 h-3.5" />
+              <span>{showLearningGuide ? 'Ocultar Guía y Ejemplos IA' : '🎓 Guía de Aprendizaje + Ejemplos IA'}</span>
+            </button>
+
+            <button
+              type="button"
+              disabled={isGeneratingAllExamples || isGeneratingViralExpress}
+              onClick={handleGenerateAllExampleVideosWithAI}
+              className="px-3.5 py-2 rounded-xl bg-cyan-500 hover:bg-cyan-400 disabled:opacity-50 text-slate-950 text-xs font-extrabold flex items-center gap-1.5 shadow-sm transition-all cursor-pointer"
+              title="Generar los 5 videos de ejemplo con IA y guardarlos en tu biblioteca en 1 clic"
+            >
+              {isGeneratingAllExamples ? (
+                <>
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  <span>Generando 5 Ejemplos IA...</span>
+                </>
+              ) : (
+                <>
+                  <Film className="w-3.5 h-3.5" />
+                  <span>🎬 Generar 5 Videos de Ejemplo IA</span>
+                </>
+              )}
+            </button>
+
             <button
               type="button"
               onClick={() => setIsSimpleBusinessMode((prev) => !prev)}
@@ -7551,6 +8018,135 @@ export default function App() {
             </button>
           </div>
         </div>
+
+        {/* INTERACTIVE AI LEARNING GUIDE & 1-CLICK EXAMPLE VIDEOS GENERATOR */}
+        {showLearningGuide && (() => {
+          const activeLesson =
+            AI_EXAMPLE_VIDEOS_AND_LESSONS[activeLearningStep] || AI_EXAMPLE_VIDEOS_AND_LESSONS[0];
+          return (
+            <div className="p-4 rounded-2xl bg-slate-950/95 border-2 border-fuchsia-500/60 space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-800 pb-3">
+                <div>
+                  <span className="text-[11px] font-mono font-extrabold text-fuchsia-400 uppercase tracking-wider block">
+                    🎓 GUÍA DE APRENDIZAJE PASO A PASO + GENERADOR DE VIDEOS DE EJEMPLO CON IA
+                  </span>
+                  <h3 className="text-sm sm:text-base font-extrabold text-white">
+                    Aprende a usar todas las herramientas de IA en 5 lecciones prácticas con videos de ejemplo listos
+                  </h3>
+                </div>
+                <span className="px-2.5 py-1 rounded-lg bg-cyan-500/15 border border-cyan-400/40 text-cyan-300 font-mono text-[11px] font-bold shrink-0">
+                  Lección {activeLesson.stepNumber} de {AI_EXAMPLE_VIDEOS_AND_LESSONS.length}
+                </span>
+              </div>
+
+              {/* 5 Selectable Lesson / Example Video Tabs */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-2">
+                {AI_EXAMPLE_VIDEOS_AND_LESSONS.map((item, idx) => {
+                  const isCurrent = activeLearningStep === idx;
+                  return (
+                    <button
+                      key={item.id}
+                      type="button"
+                      onClick={() => handleLoadOrGenerateExampleVideo(idx, false)}
+                      className={`p-2.5 rounded-xl border text-left transition-all cursor-pointer flex flex-col justify-between ${
+                        isCurrent
+                          ? 'bg-gradient-to-br from-fuchsia-600/90 to-cyan-600/90 border-cyan-300 text-white shadow-md'
+                          : 'bg-slate-900 border-slate-800 text-slate-300 hover:border-fuchsia-500/50 hover:text-white'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between gap-1">
+                        <span className="text-[11px] font-mono font-extrabold text-cyan-200">
+                          {item.badge}
+                        </span>
+                        <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-black/40 text-amber-300">
+                          {item.aspectRatio}
+                        </span>
+                      </div>
+                      <div className="text-xs font-extrabold mt-1 leading-snug">{item.shortTitle}</div>
+                      <div className="text-[10px] text-cyan-200/90 mt-1 font-semibold flex items-center gap-1">
+                        <Play className="w-2.5 h-2.5 fill-current" />
+                        <span>Clic para cargar ejemplo</span>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+
+              {/* Active Lesson Details: Step-by-Step Guide + Example Scene Breakdown + 1-Click Generator Buttons */}
+              <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 items-start pt-1">
+                <div className="lg:col-span-7 bg-slate-900/90 border border-slate-800 rounded-xl p-3.5 space-y-2.5">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="px-2 py-0.5 rounded bg-fuchsia-600 text-white font-mono text-[10px] font-extrabold uppercase">
+                      {activeLesson.badge} · GUÍA PRÁCTICA
+                    </span>
+                    <span className="text-[11px] font-mono text-cyan-300">
+                      Escenario 3D: {activeLesson.preset.toUpperCase()}
+                    </span>
+                  </div>
+                  <h4 className="text-sm font-extrabold text-white">{activeLesson.title}</h4>
+                  <p className="text-xs text-cyan-200 font-medium">{activeLesson.guideGoal}</p>
+
+                  <div className="space-y-1.5 pt-1">
+                    {activeLesson.guideSteps.map((stepTxt, sIdx) => (
+                      <div
+                        key={sIdx}
+                        className="p-2 rounded-lg bg-slate-950/90 border border-slate-800/90 text-xs text-slate-200 flex items-start gap-2"
+                      >
+                        <Check className="w-3.5 h-3.5 text-emerald-400 shrink-0 mt-0.5" />
+                        <span>{stepTxt}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="lg:col-span-5 bg-slate-900/90 border border-slate-800 rounded-xl p-3.5 space-y-3">
+                  <div className="text-[11px] font-mono font-bold text-amber-300 uppercase">
+                    🎬 ESCENAS Y TRANSICIONES INCLUIDAS EN ESTE EJEMPLO:
+                  </div>
+                  <div className="space-y-1.5">
+                    {activeLesson.scenes.map((sc, scIdx) => {
+                      const tMeta = getSceneTransitionPreset(sc.transition);
+                      return (
+                        <div
+                          key={scIdx}
+                          className="px-2.5 py-1.5 rounded-lg bg-slate-950 border border-slate-800 flex items-center justify-between gap-2 text-[11px]"
+                        >
+                          <span className="text-white font-semibold truncate">
+                            <strong className="text-cyan-400 font-mono">E0{scIdx + 1}:</strong> {sc.overlayText}
+                          </span>
+                          <span className="px-1.5 py-0.5 rounded bg-fuchsia-950 border border-fuchsia-500/40 text-fuchsia-300 font-mono text-[10px] shrink-0">
+                            {tMeta.badge} {tMeta.shortLabel} ({sc.transitionDurationSec.toFixed(1)}s)
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
+                    <button
+                      type="button"
+                      onClick={() => handleLoadOrGenerateExampleVideo(activeLearningStep, false)}
+                      className="py-2.5 px-3 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 text-xs font-extrabold flex items-center justify-center gap-1.5 cursor-pointer shadow-sm"
+                    >
+                      <Play className="w-3.5 h-3.5 fill-slate-950" />
+                      <span>Ver Ejemplo #{activeLesson.stepNumber} Ahora</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      disabled={isGeneratingViralExpress}
+                      onClick={() => handleLoadOrGenerateExampleVideo(activeLearningStep, true)}
+                      className="py-2.5 px-3 rounded-xl bg-gradient-to-r from-fuchsia-600 to-cyan-500 hover:from-fuchsia-500 hover:to-cyan-400 disabled:opacity-50 text-white text-xs font-extrabold flex items-center justify-center gap-1.5 cursor-pointer shadow-sm"
+                    >
+                      <Sparkles className="w-3.5 h-3.5" />
+                      <span>Regenerar Ejemplo con IA</span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          );
+        })()}
 
         {/* Step 1: 1-Click Viral Formulas */}
         <div className="space-y-2">
@@ -7712,6 +8308,66 @@ export default function App() {
                 </>
               )}
             </button>
+
+            {/* OPCIÓN 3 DIRECTA: Transcribir un Video Existente y Regenerarlo en 3D con IA */}
+            <div className="p-3 rounded-2xl bg-slate-950/90 border border-cyan-500/40 space-y-2">
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-[11px] font-mono font-bold text-cyan-300 uppercase flex items-center gap-1.5">
+                  <Box className="w-3.5 h-3.5 text-fuchsia-400" />
+                  <span>🎬 OPCIÓN 3: Transcribir Video Existente y Regenerarlo en 3D con IA</span>
+                </span>
+                {isTranscribingVideoTo3D && (
+                  <span className="text-[11px] font-mono font-bold text-amber-300 flex items-center gap-1">
+                    <Loader2 className="w-3 h-3 animate-spin" />
+                    <span>Transcribiendo a 3D...</span>
+                  </span>
+                )}
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                <label
+                  className="py-2.5 px-3 rounded-xl bg-cyan-600 hover:bg-cyan-500 text-white text-xs font-extrabold flex items-center justify-center gap-1.5 cursor-pointer transition-colors text-center shadow-sm"
+                  title="Sube cualquier video (.mp4, .mov, .webm) para que la IA transcriba su voz y lo convierta en escenas 3D"
+                >
+                  <Upload className="w-3.5 h-3.5 shrink-0" />
+                  <span>1. Subir Video → 3D IA</span>
+                  <input
+                    type="file"
+                    accept="video/*,audio/*,.mp4,.webm,.mov,.mp3,.wav"
+                    onChange={(e) => {
+                      const f = e.target.files?.[0];
+                      if (f) {
+                        setUploadedVideoName(f.name);
+                        handleTranscribeAndGenerate3DFromVideo(f, { openIn3D: false, regenerateVisuals: true });
+                      }
+                      e.target.value = '';
+                    }}
+                    className="hidden"
+                  />
+                </label>
+
+                <button
+                  type="button"
+                  disabled={isTranscribingVideoTo3D}
+                  onClick={() => handleTranscribeAndGenerate3DFromVideo(undefined, { openIn3D: false, regenerateVisuals: true })}
+                  className="py-2.5 px-3 rounded-xl bg-fuchsia-600 hover:bg-fuchsia-500 disabled:opacity-50 text-white text-xs font-extrabold flex items-center justify-center gap-1.5 cursor-pointer transition-colors shadow-sm"
+                  title="Regenera nuevas escenas 3D con IA a partir de tu video o idea actual"
+                >
+                  <Sparkles className="w-3.5 h-3.5 shrink-0" />
+                  <span>2. Regenerar en 3D IA</span>
+                </button>
+
+                <button
+                  type="button"
+                  disabled={isTranscribingVideoTo3D}
+                  onClick={() => handleTranscribeAndGenerate3DFromVideo(undefined, { openIn3D: true, regenerateVisuals: true })}
+                  className="py-2.5 px-3 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white text-xs font-extrabold flex items-center justify-center gap-1.5 cursor-pointer transition-colors shadow-sm"
+                  title="Transcribe el video, regenera sus escenas y ábrelo directamente en el Estudio Espacial 3D"
+                >
+                  <Box className="w-3.5 h-3.5 shrink-0" />
+                  <span>3. Abrir en Estudio 3D</span>
+                </button>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -8674,6 +9330,7 @@ export default function App() {
 
       const data = await res.json();
       const presets: SubjectPresetId[] = ['coupe', 'station', 'drone', 'sculpture', 'protein'];
+      const transitionCycle: SceneTransitionId[] = ['dissolve', 'slide-left', 'wipe-right', 'zoom-cut', 'slide-up', 'wipe-radial'];
       const builtScenes: Scene[] = Array.isArray(data.scenes)
         ? data.scenes.map((sc: any, idx: number) => {
             const preset: SubjectPresetId = presets.includes(sc.scene3dPreset)
@@ -8688,6 +9345,8 @@ export default function App() {
               overlayText: sc.overlayText || sc.description,
               duration: sc.duration || '4s',
               scene3dPreset: preset,
+              transition: transitionCycle[idx % transitionCycle.length],
+              transitionDurationSec: 0.8,
               imageUrl: imgUrl,
               images: [imgUrl],
             };
@@ -8730,6 +9389,14 @@ export default function App() {
 
         await persistVideoProject(newProj);
         setActiveStudioProject(newProj);
+        setViralExpressResult({
+          title: newProj.title,
+          viralHook: builtScenes[0]?.overlayText || newProj.title,
+          viralCta: 'Síguenos y visita https://whop.com/@saulmente',
+          hashtags: '#ReelifyAI #3DVideo #ViralIA #VideoCreator',
+          transcript: String(data.transcript || newProj.prompt),
+          project: newProj,
+        });
         setSaveBannerMessage(
           `¡Video "${vidName}" transcrito y regenerado en ${finalScenes.length} escenas 3D con IA!`
         );
@@ -11455,8 +12122,11 @@ export default function App() {
                           </div>
 
                           <div className="p-3 rounded-xl bg-slate-950 border border-slate-800 space-y-2">
-                            <div className="text-[11px] text-slate-400">
-                              Transición activa en Escena 0{studioPreviewSceneIdx + 1}:
+                            <div className="text-[11px] text-slate-400 flex items-center justify-between">
+                              <span>Transición activa en Escena 0{studioPreviewSceneIdx + 1}:</span>
+                              <span className="font-mono font-bold text-cyan-400">
+                                Duración: {(draftScenes[studioPreviewSceneIdx]?.transitionDurationSec ?? 0.8).toFixed(1)}s
+                              </span>
                             </div>
                             <div className="text-sm font-bold text-white flex items-center gap-2">
                               <span className="px-2 py-0.5 rounded bg-fuchsia-600 text-white font-mono text-xs">
@@ -11475,6 +12145,7 @@ export default function App() {
                           <div className="flex flex-wrap items-center gap-1.5">
                             {draftScenes.map((s, idx) => {
                               const tMeta = getSceneTransitionPreset(s.transition || 'dissolve');
+                              const tDur = (s.transitionDurationSec ?? 0.8).toFixed(1);
                               const isCurrent = studioPreviewSceneIdx === idx;
                               return (
                                 <div
@@ -11486,7 +12157,9 @@ export default function App() {
                                   }`}
                                 >
                                   <span>E0{idx + 1}</span>
-                                  <span className="text-fuchsia-400">{tMeta.badge} {tMeta.shortLabel}</span>
+                                  <span className="text-fuchsia-400">
+                                    {tMeta.badge} {tMeta.shortLabel} ({tDur}s)
+                                  </span>
                                   <span>→</span>
                                 </div>
                               );
@@ -11532,7 +12205,7 @@ export default function App() {
                                   ESCENA 0{idx + 1}
                                 </span>
                                 <span className="absolute top-1.5 right-1.5 px-1.5 py-0.5 rounded bg-fuchsia-600/90 text-white font-mono text-[10px] font-bold">
-                                  {currentTransitionMeta.badge} {currentTransitionMeta.shortLabel}
+                                  {currentTransitionMeta.badge} {currentTransitionMeta.shortLabel} · {(sc.transitionDurationSec ?? 0.8).toFixed(1)}s
                                 </span>
                                 {scenePhotos.length > 0 && (
                                   <span className="absolute bottom-1.5 right-1.5 px-1.5 py-0.5 rounded bg-indigo-950/85 text-indigo-200 font-mono text-[10px]">
@@ -11674,7 +12347,7 @@ export default function App() {
                                             ? {
                                                 ...item,
                                                 transition: nextTrans,
-                                                transitionDurationSec: item.transitionDurationSec || globalTransitionDurationSec,
+                                                transitionDurationSec: item.transitionDurationSec ?? globalTransitionDurationSec,
                                               }
                                             : item
                                         )
@@ -11689,6 +12362,46 @@ export default function App() {
                                       </option>
                                     ))}
                                   </select>
+
+                                  {/* Individual Per-Scene Transition Duration Slider */}
+                                  <div
+                                    className="flex items-center gap-2 bg-fuchsia-50/90 border border-fuchsia-200 rounded-xl px-2.5 py-1 shadow-2xs"
+                                    title={`Personaliza la duración exacta de la transición para la Escena 0${idx + 1}`}
+                                  >
+                                    <label
+                                      htmlFor={`scene-transition-duration-slider-${idx}`}
+                                      className="text-[11px] font-bold text-fuchsia-800 whitespace-nowrap"
+                                    >
+                                      Dur. Transición:
+                                    </label>
+                                    <span className="text-[10px] font-mono text-fuchsia-500 tabular-nums">0.1s</span>
+                                    <input
+                                      id={`scene-transition-duration-slider-${idx}`}
+                                      type="range"
+                                      min={0.1}
+                                      max={3.0}
+                                      step={0.1}
+                                      disabled={sc.transition === 'none'}
+                                      value={sc.transitionDurationSec ?? globalTransitionDurationSec}
+                                      onChange={(e) => {
+                                        const nextDur = parseFloat(e.target.value);
+                                        const safeDur = Number.isFinite(nextDur) ? Math.round(nextDur * 10) / 10 : 0.8;
+                                        setDraftScenes((prev) =>
+                                          prev.map((item, i) =>
+                                            i === idx ? { ...item, transitionDurationSec: safeDur } : item
+                                          )
+                                        );
+                                      }}
+                                      aria-label={`Duración de transición de la escena ${idx + 1}`}
+                                      className="w-20 sm:w-24 h-1.5 bg-fuchsia-200 rounded-lg appearance-none cursor-pointer accent-fuchsia-600 disabled:opacity-40 focus:outline-none"
+                                    />
+                                    <span className="text-[10px] font-mono text-fuchsia-500 tabular-nums">3.0s</span>
+                                    <span className="px-1.5 py-0.5 rounded bg-white border border-fuchsia-300 text-[11px] font-mono font-extrabold text-fuchsia-700 tabular-nums min-w-[2.75rem] text-center">
+                                      {sc.transition === 'none'
+                                        ? '0.0s'
+                                        : `${(sc.transitionDurationSec ?? globalTransitionDurationSec).toFixed(1)}s`}
+                                    </span>
+                                  </div>
                                 </div>
 
                                 <div className="flex flex-wrap items-center gap-2.5 bg-white border border-slate-200 rounded-xl px-3 py-1.5 shadow-2xs">
@@ -11910,26 +12623,40 @@ export default function App() {
                                   );
                                 })}
 
-                                <div className="flex items-center gap-1.5 ml-1 pl-2 border-l border-slate-200">
-                                  <span className="text-[10px] font-mono text-slate-500">Dur:</span>
-                                  <select
-                                    value={String(sc.transitionDurationSec || 0.8)}
+                                <div className="flex items-center gap-2 ml-1 pl-2.5 border-l border-cyan-300 bg-white/90 px-2.5 py-1 rounded-lg border border-fuchsia-200">
+                                  <label
+                                    htmlFor={`connector-transition-duration-slider-${idx}`}
+                                    className="text-[10px] font-mono font-bold text-fuchsia-800 whitespace-nowrap"
+                                  >
+                                    Duración:
+                                  </label>
+                                  <span className="text-[10px] font-mono text-slate-400 tabular-nums">0.1s</span>
+                                  <input
+                                    id={`connector-transition-duration-slider-${idx}`}
+                                    type="range"
+                                    min={0.1}
+                                    max={3.0}
+                                    step={0.1}
+                                    disabled={sc.transition === 'none'}
+                                    value={sc.transitionDurationSec ?? globalTransitionDurationSec}
                                     onChange={(e) => {
-                                      const sec = parseFloat(e.target.value) || 0.8;
+                                      const sec = parseFloat(e.target.value);
+                                      const safeSec = Number.isFinite(sec) ? Math.round(sec * 10) / 10 : 0.8;
                                       setDraftScenes((prev) =>
                                         prev.map((item, i) =>
-                                          i === idx ? { ...item, transitionDurationSec: sec } : item
+                                          i === idx ? { ...item, transitionDurationSec: safeSec } : item
                                         )
                                       );
                                     }}
-                                    className="bg-white border border-slate-200 rounded px-1.5 py-0.5 text-[11px] font-mono font-bold text-slate-800 outline-none"
-                                  >
-                                    <option value="0.4">0.4s</option>
-                                    <option value="0.6">0.6s</option>
-                                    <option value="0.8">0.8s</option>
-                                    <option value="1.2">1.2s</option>
-                                    <option value="1.5">1.5s</option>
-                                  </select>
+                                    aria-label={`Duración de la transición entre Escena ${idx + 1} y Escena ${idx + 2}`}
+                                    className="w-20 sm:w-28 h-1.5 bg-fuchsia-200 rounded-lg appearance-none cursor-pointer accent-fuchsia-600 disabled:opacity-40 focus:outline-none"
+                                  />
+                                  <span className="text-[10px] font-mono text-slate-400 tabular-nums">3.0s</span>
+                                  <span className="px-1.5 py-0.5 rounded bg-fuchsia-50 border border-fuchsia-300 text-[11px] font-mono font-extrabold text-fuchsia-700 tabular-nums min-w-[2.75rem] text-center">
+                                    {sc.transition === 'none'
+                                      ? '0.0s'
+                                      : `${(sc.transitionDurationSec ?? globalTransitionDurationSec).toFixed(1)}s`}
+                                  </span>
                                 </div>
                               </div>
                             </div>
