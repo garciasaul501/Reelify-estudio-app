@@ -36,6 +36,16 @@ export type SubjectPresetId = 'coupe' | 'sculpture' | 'drone' | 'station' | 'pro
 export type ParticlePatternId = 'vortex' | 'fountain' | 'galaxy';
 export type PhotoSpinModeId = 'orbit' | 'self_spin' | 'helix_tilt';
 
+export type SceneTransitionId =
+  | 'dissolve'
+  | 'slide-left'
+  | 'slide-up'
+  | 'wipe-right'
+  | 'wipe-radial'
+  | 'zoom-cut'
+  | 'neon-flash'
+  | 'none';
+
 export interface SceneItem {
   description: string;
   duration: string;
@@ -43,6 +53,8 @@ export interface SceneItem {
   images?: string[];
   scene3dPreset?: SubjectPresetId;
   overlayText?: string;
+  transition?: SceneTransitionId;
+  transitionDurationSec?: number;
 }
 
 export interface StudioProjectContext {

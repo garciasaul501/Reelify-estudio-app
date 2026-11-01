@@ -70,7 +70,7 @@ import {
   RotateCcw
 } from 'lucide-react';
 import { motion } from 'motion/react';
-import Studio3DScene, { SubjectPresetId, SceneItem } from './components/Studio3DScene';
+import Studio3DScene, { SubjectPresetId, SceneItem, SceneTransitionId } from './components/Studio3DScene';
 
 // --- Firestore Error Handling ---
 enum OperationType {
@@ -129,6 +129,80 @@ export interface Scene {
   scene3dPreset?: SubjectPresetId;
   overlayText?: string;
   aiInstruction?: string;
+  transition?: SceneTransitionId;
+  transitionDurationSec?: number;
+}
+
+export const SCENE_TRANSITION_PRESETS: {
+  id: SceneTransitionId;
+  label: string;
+  shortLabel: string;
+  badge: string;
+  description: string;
+}[] = [
+  {
+    id: 'dissolve',
+    label: 'Cross Dissolve (Fundido Suave)',
+    shortLabel: 'Dissolve',
+    badge: '≈',
+    description: 'Fundido cruzado cinematográfico suave entre la escena actual y la siguiente.',
+  },
+  {
+    id: 'slide-left',
+    label: 'Slide Push Left (Deslizar Izquierda)',
+    shortLabel: 'Slide Left',
+    badge: '⇐',
+    description: 'Desliza horizontalmente la escena actual hacia la izquierda empujando la nueva escena.',
+  },
+  {
+    id: 'slide-up',
+    label: 'Slide Push Up (Deslizar Arriba)',
+    shortLabel: 'Slide Up',
+    badge: '⇑',
+    description: 'Desplaza verticalmente la escena hacia arriba revelando el siguiente plano.',
+  },
+  {
+    id: 'wipe-right',
+    label: 'Cinema Wipe (Barrido Neón)',
+    shortLabel: 'Wipe',
+    badge: '▮▸',
+    description: 'Cortinilla de barrido horizontal con línea láser neón entre ambas escenas.',
+  },
+  {
+    id: 'wipe-radial',
+    label: 'Iris Radial Wipe (Apertura Circular)',
+    shortLabel: 'Iris Wipe',
+    badge: '◎',
+    description: 'Apertura de iris circular desde el centro hacia los bordes del encuadre.',
+  },
+  {
+    id: 'zoom-cut',
+    label: 'Whip Zoom (Zoom Dinámico)',
+    shortLabel: 'Whip Zoom',
+    badge: '⊕',
+    description: 'Acercamiento rápido con impulso óptico hacia el centro de la siguiente escena.',
+  },
+  {
+    id: 'neon-flash',
+    label: 'Neon Flash (Destello Ciberpunk)',
+    shortLabel: 'Neon Flash',
+    badge: '⚡',
+    description: 'Destello estroboscópico rosa neón y azul eléctrico en el cambio de plano.',
+  },
+  {
+    id: 'none',
+    label: 'Hard Cut (Corte Directo)',
+    shortLabel: 'Cut',
+    badge: '✂',
+    description: 'Cambio de plano instantáneo sin transición intermedia.',
+  },
+];
+
+export function getSceneTransitionPreset(transitionId?: SceneTransitionId) {
+  return (
+    SCENE_TRANSITION_PRESETS.find((t) => t.id === transitionId) ||
+    SCENE_TRANSITION_PRESETS[0]
+  );
 }
 
 export type VideoFilterId = 'none' | 'grayscale' | 'sepia' | 'high-contrast' | 'vintage';
@@ -531,6 +605,169 @@ function drawImageCover(
   ctx.globalAlpha = alpha;
   ctx.drawImage(img, dx, dy, dw, dh);
   ctx.restore();
+}
+
+// Smooth cubic ease-in-out helper for transitions
+function easeInOutCubic(x: number): number {
+  const clamped = Math.max(0, Math.min(1, x));
+  return clamped < 0.5
+    ? 4 * clamped * clamped * clamped
+    : 1 - Math.pow(-2 * clamped + 2, 3) / 2;
+}
+
+// Render two adjacent scene images with the selected transition effect (dissolve, slide, wipe, zoom, flash, cut)
+function renderSceneTransitionOnCanvas(params: {
+  ctx: CanvasRenderingContext2D;
+  currentImg: HTMLImageElement;
+  nextImg: HTMLImageElement;
+  w: number;
+  h: number;
+  sceneLocalProgress: number;
+  sceneDurationSec: number;
+  transitionType?: SceneTransitionId;
+  transitionDurationSec?: number;
+  sceneIdx: number;
+  totalScenes: number;
+}) {
+  const {
+    ctx,
+    currentImg,
+    nextImg,
+    w,
+    h,
+    sceneLocalProgress,
+    sceneDurationSec,
+    transitionType = 'dissolve',
+    transitionDurationSec = 0.8,
+    sceneIdx,
+  } = params;
+
+  const dir = sceneIdx % 2 === 0 ? 1 : -1;
+  const baseZoom = 1.03 + sceneLocalProgress * 0.08;
+  const basePanX = dir * (sceneLocalProgress - 0.5) * 26;
+  const basePanY = -dir * (sceneLocalProgress - 0.5) * 12;
+
+  // Fraction of the scene occupied by the outgoing transition (clamped between 12% and 45% of scene duration)
+  const effectiveTransSec = Math.max(0.2, Math.min(sceneDurationSec * 0.45, transitionDurationSec || 0.8));
+  const transFraction =
+    transitionType === 'none' ? 0 : Math.max(0.12, Math.min(0.45, effectiveTransSec / Math.max(1, sceneDurationSec)));
+  const transStart = 1 - transFraction;
+
+  if (transitionType === 'none' || sceneLocalProgress <= transStart || currentImg === nextImg) {
+    drawImageCover(ctx, currentImg, w, h, baseZoom, basePanX, basePanY, 0.96);
+    return;
+  }
+
+  const rawT = (sceneLocalProgress - transStart) / Math.max(0.001, 1 - transStart);
+  const t = easeInOutCubic(rawT);
+
+  if (transitionType === 'dissolve') {
+    drawImageCover(ctx, currentImg, w, h, baseZoom, basePanX, basePanY, (1 - t * 0.85) * 0.96);
+    drawImageCover(ctx, nextImg, w, h, 1.03 + t * 0.03, 0, 0, t * 0.96);
+  } else if (transitionType === 'slide-left') {
+    const offsetCurrentX = -t * w;
+    const offsetNextX = (1 - t) * w;
+    ctx.save();
+    ctx.translate(offsetCurrentX, 0);
+    drawImageCover(ctx, currentImg, w, h, baseZoom, 0, 0, 0.96);
+    ctx.restore();
+
+    ctx.save();
+    ctx.translate(offsetNextX, 0);
+    drawImageCover(ctx, nextImg, w, h, 1.04, 0, 0, 0.96);
+    ctx.restore();
+
+    // Glowing seam bar on the sliding edge
+    ctx.save();
+    ctx.strokeStyle = '#00e5ff';
+    ctx.lineWidth = 4;
+    ctx.beginPath();
+    ctx.moveTo(offsetNextX, 0);
+    ctx.lineTo(offsetNextX, h);
+    ctx.stroke();
+    ctx.restore();
+  } else if (transitionType === 'slide-up') {
+    const offsetCurrentY = -t * h;
+    const offsetNextY = (1 - t) * h;
+    ctx.save();
+    ctx.translate(0, offsetCurrentY);
+    drawImageCover(ctx, currentImg, w, h, baseZoom, 0, 0, 0.96);
+    ctx.restore();
+
+    ctx.save();
+    ctx.translate(0, offsetNextY);
+    drawImageCover(ctx, nextImg, w, h, 1.04, 0, 0, 0.96);
+    ctx.restore();
+
+    ctx.save();
+    ctx.strokeStyle = '#ff007f';
+    ctx.lineWidth = 4;
+    ctx.beginPath();
+    ctx.moveTo(0, offsetNextY);
+    ctx.lineTo(w, offsetNextY);
+    ctx.stroke();
+    ctx.restore();
+  } else if (transitionType === 'wipe-right') {
+    drawImageCover(ctx, currentImg, w, h, baseZoom, basePanX, basePanY, 0.96);
+    const wipeX = t * w;
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(0, 0, wipeX, h);
+    ctx.clip();
+    drawImageCover(ctx, nextImg, w, h, 1.04, 0, 0, 0.98);
+    ctx.restore();
+
+    // Glowing laser wipe line
+    ctx.save();
+    const lineGrad = ctx.createLinearGradient(0, 0, 0, h);
+    lineGrad.addColorStop(0, '#ff007f');
+    lineGrad.addColorStop(0.5, '#00e5ff');
+    lineGrad.addColorStop(1, '#ff007f');
+    ctx.strokeStyle = lineGrad;
+    ctx.lineWidth = 5;
+    ctx.beginPath();
+    ctx.moveTo(wipeX, 0);
+    ctx.lineTo(wipeX, h);
+    ctx.stroke();
+    ctx.restore();
+  } else if (transitionType === 'wipe-radial') {
+    drawImageCover(ctx, currentImg, w, h, baseZoom, basePanX, basePanY, 0.96);
+    const maxRadius = Math.hypot(w / 2, h / 2) * 1.05;
+    const currentRadius = Math.max(2, t * maxRadius);
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(w / 2, h / 2, currentRadius, 0, Math.PI * 2);
+    ctx.clip();
+    drawImageCover(ctx, nextImg, w, h, 1.04, 0, 0, 0.98);
+    ctx.restore();
+
+    ctx.save();
+    ctx.strokeStyle = '#00e5ff';
+    ctx.lineWidth = 3.5;
+    ctx.beginPath();
+    ctx.arc(w / 2, h / 2, currentRadius, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.restore();
+  } else if (transitionType === 'zoom-cut') {
+    const outZoom = baseZoom + t * 0.65;
+    const inZoom = 1.45 - t * 0.41;
+    drawImageCover(ctx, currentImg, w, h, outZoom, basePanX * (1 - t), basePanY * (1 - t), (1 - t) * 0.96);
+    drawImageCover(ctx, nextImg, w, h, inZoom, 0, 0, t * 0.98);
+  } else if (transitionType === 'neon-flash') {
+    const chosenImg = t < 0.5 ? currentImg : nextImg;
+    drawImageCover(ctx, chosenImg, w, h, baseZoom + Math.sin(t * Math.PI) * 0.08, 0, 0, 0.96);
+    const flashIntensity = Math.sin(t * Math.PI);
+    ctx.save();
+    const flashGrad = ctx.createLinearGradient(0, 0, w, h);
+    flashGrad.addColorStop(0, `rgba(255, 0, 127, ${flashIntensity * 0.78})`);
+    flashGrad.addColorStop(0.5, `rgba(255, 255, 255, ${flashIntensity * 0.88})`);
+    flashGrad.addColorStop(1, `rgba(0, 229, 255, ${flashIntensity * 0.78})`);
+    ctx.fillStyle = flashGrad;
+    ctx.fillRect(0, 0, w, h);
+    ctx.restore();
+  } else {
+    drawImageCover(ctx, currentImg, w, h, baseZoom, basePanX, basePanY, 0.96);
+  }
 }
 
 const LOCAL_STORAGE_KEY = 'reelify_local_video_projects_v2';
@@ -1162,18 +1399,32 @@ export async function exportVideoProjectToMp4(
 
       if (validImgs.length > 0) {
         const currentImg = validImgs[sceneIdx % validImgs.length];
-        const zoom = 1.03 + sceneLocalProgress * 0.08;
-        drawImageCover(ctx, currentImg, w, h, zoom, 0, 0, 0.96);
+        const nextImg = validImgs[(sceneIdx + 1) % validImgs.length];
+        const sceneDurSec = parseDurationSeconds(activeScene.duration, 4);
+        renderSceneTransitionOnCanvas({
+          ctx,
+          currentImg,
+          nextImg,
+          w,
+          h,
+          sceneLocalProgress,
+          sceneDurationSec: sceneDurSec,
+          transitionType: activeScene.transition || 'dissolve',
+          transitionDurationSec: activeScene.transitionDurationSec || 0.8,
+          sceneIdx,
+          totalScenes: scenes.length,
+        });
       }
 
       ctx.restore();
 
+      const activeTransMeta = getSceneTransitionPreset(activeScene.transition || 'dissolve');
       ctx.fillStyle = 'rgba(9, 13, 22, 0.88)';
       ctx.fillRect(0, h - 74, w, 74);
       ctx.fillStyle = '#38bdf8';
       ctx.font = '600 12px monospace';
       ctx.fillText(
-        `${video.title.slice(0, 34)} · ESCENA ${sceneIdx + 1}/${scenes.length} · SIN VOZ (TEXTO ACTIVO)`,
+        `${video.title.slice(0, 28)} · ESC ${sceneIdx + 1}/${scenes.length} · TRANSICIÓN: ${activeTransMeta.shortLabel.toUpperCase()}`,
         20,
         h - 46
       );
@@ -1335,18 +1586,21 @@ const ProceduralVideoCanvas = ({
       if (validImgs.length > 0) {
         const currentImg = validImgs[sceneIdx % validImgs.length];
         const nextImg = validImgs[(sceneIdx + 1) % validImgs.length];
+        const sceneDurSec = sceneDurations[sceneIdx] || 4;
 
-        const dir = sceneIdx % 2 === 0 ? 1 : -1;
-        const zoomA = 1.03 + sceneLocalProgress * 0.09;
-        const panXA = dir * (sceneLocalProgress - 0.5) * 28;
-        const panYA = -dir * (sceneLocalProgress - 0.5) * 14;
-
-        drawImageCover(ctx, currentImg, w, h, zoomA, panXA, panYA, 0.94);
-
-        if (validImgs.length > 1 && sceneLocalProgress > 0.78) {
-          const fadeAlpha = (sceneLocalProgress - 0.78) / 0.22;
-          drawImageCover(ctx, nextImg, w, h, 1.03, 0, 0, fadeAlpha * 0.94);
-        }
+        renderSceneTransitionOnCanvas({
+          ctx,
+          currentImg,
+          nextImg,
+          w,
+          h,
+          sceneLocalProgress,
+          sceneDurationSec: sceneDurSec,
+          transitionType: activeScene.transition || 'dissolve',
+          transitionDurationSec: activeScene.transitionDurationSec || 0.8,
+          sceneIdx,
+          totalScenes: scenes.length,
+        });
 
         const vignette = ctx.createRadialGradient(w / 2, h / 2, w * 0.25, w / 2, h / 2, w * 0.65);
         vignette.addColorStop(0, 'rgba(0,0,0,0)');
@@ -1386,7 +1640,7 @@ const ProceduralVideoCanvas = ({
 
       ctx.restore();
 
-      // Cinema letterbox bar & Storyboard HUD metadata (Silent Scenario + White & Neon On-Screen Text)
+      // Cinema letterbox bar & Storyboard HUD metadata (Silent Scenario + White & Neon On-Screen Text + Active Transition)
       ctx.fillStyle = 'rgba(255, 255, 255, 0.94)';
       ctx.fillRect(0, h - 80, w, 80);
       ctx.strokeStyle = '#ff007f';
@@ -1399,9 +1653,11 @@ const ProceduralVideoCanvas = ({
       ctx.fillStyle = '#00b8d4';
       ctx.font = 'bold 12px "JetBrains Mono", monospace';
       const presetBadge = activeScene.scene3dPreset ? ` · 3D: ${activeScene.scene3dPreset.toUpperCase()}` : '';
+      const transitionMeta = getSceneTransitionPreset(activeScene.transition || 'dissolve');
+      const transBadge = ` · TRANSICIÓN: ${transitionMeta.badge} ${transitionMeta.shortLabel.toUpperCase()}`;
       const filterBadge = activeFilterPreset.id !== 'none' ? ` · FILTER: ${activeFilterPreset.label.toUpperCase()}` : '';
       ctx.fillText(
-        `EDICIÓN NEÓN & BLANCO · ESCENA ${sceneIdx + 1}/${scenes.length} (${activeScene.duration}) · TEXTO EN PANTALLA${presetBadge}${filterBadge}`,
+        `ESCENA ${sceneIdx + 1}/${scenes.length} (${activeScene.duration})${presetBadge}${transBadge}${filterBadge}`,
         22,
         h - 50
       );
@@ -2899,11 +3155,36 @@ const VideoPlayerModal = ({
                         </div>
                       </div>
 
-                      {/* Per-Scene Quick Actions: Agregar Foto · Dictar por Voz · Regenerar con IA */}
+                      {/* Per-Scene Quick Actions: Transición · Agregar Foto · Dictar por Voz · Regenerar con IA */}
                       <div
                         className="flex flex-wrap items-center gap-1.5 pt-1 border-t border-slate-200/70"
                         onClick={(ev) => ev.stopPropagation()}
                       >
+                        <select
+                          value={sc.transition || 'dissolve'}
+                          onChange={async (e) => {
+                            const nextTrans = e.target.value as SceneTransitionId;
+                            const nextScenes = scenes.map((item, idx) =>
+                              idx === i ? { ...item, transition: nextTrans } : item
+                            );
+                            setLocalScenesState(nextScenes);
+                            if (onSaveAsNewProject) {
+                              await onSaveAsNewProject({
+                                ...video,
+                                filter: selectedFilter,
+                                scenes: nextScenes,
+                              });
+                            }
+                          }}
+                          className="px-2 py-1 rounded bg-violet-50 border border-violet-200 text-violet-800 text-[10px] font-bold outline-none focus:border-violet-500"
+                          title="Efecto de transición hacia la siguiente escena"
+                        >
+                          {SCENE_TRANSITION_PRESETS.map((tp) => (
+                            <option key={tp.id} value={tp.id}>
+                              {tp.badge} {tp.shortLabel}
+                            </option>
+                          ))}
+                        </select>
                         <label className="cursor-pointer px-2 py-1 rounded bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 text-[10px] font-semibold flex items-center gap-1">
                           <Upload className="w-3 h-3" />
                           <span>+ Foto</span>
@@ -6073,30 +6354,44 @@ export default function App() {
   const [uploadedVideoObjectUrl, setUploadedVideoObjectUrl] = useState<string | null>(null);
   const [uploadedVideoName, setUploadedVideoName] = useState<string | null>(null);
 
-  // Editable Multi-Scene Timeline List in Create Studio
+  // Editable Multi-Scene Timeline List in Create Studio (with per-scene transition effects)
+  const [globalTransitionPreset, setGlobalTransitionPreset] = useState<SceneTransitionId>('dissolve');
+  const [globalTransitionDurationSec, setGlobalTransitionDurationSec] = useState<number>(0.8);
+  const [showLiveTransitionPreview, setShowLiveTransitionPreview] = useState<boolean>(true);
+  const [isStudioPreviewPlaying, setIsStudioPreviewPlaying] = useState<boolean>(true);
+  const [studioPreviewSceneIdx, setStudioPreviewSceneIdx] = useState<number>(0);
+
   const [draftScenes, setDraftScenes] = useState<Scene[]>([
     {
       description: 'Plano de apertura: Presentación del sujeto principal bajo iluminación cálida de estudio.',
       duration: '4s',
       scene3dPreset: 'coupe',
+      transition: 'dissolve',
+      transitionDurationSec: 0.8,
       imageUrl: createSampleSceneDataUrl('coupe', 'Escena 01 · Apertura Estudio'),
     },
     {
       description: 'Travelling orbital 3D: Transición hacia el anillo espacial con rotación centrífuga.',
       duration: '4s',
       scene3dPreset: 'station',
+      transition: 'slide-left',
+      transitionDurationSec: 0.8,
       imageUrl: createSampleSceneDataUrl('station', 'Escena 02 · Anillo Orbital 3D'),
     },
     {
       description: 'Toma aérea con dron de cine 8K siguiendo la acción principal con poca profundidad de campo.',
       duration: '4s',
       scene3dPreset: 'drone',
+      transition: 'wipe-right',
+      transitionDurationSec: 0.8,
       imageUrl: createSampleSceneDataUrl('drone', 'Escena 03 · Seguimiento Aéreo Dron'),
     },
     {
       description: 'Cierre macro en laboratorio bio-estructural mostrando la hélice molecular AlphaFold en 3D.',
       duration: '4s',
       scene3dPreset: 'protein',
+      transition: 'zoom-cut',
+      transitionDurationSec: 0.8,
       imageUrl: createSampleSceneDataUrl('protein', 'Escena 04 · Hélice AlphaFold 3D'),
     },
   ]);
@@ -6128,6 +6423,27 @@ export default function App() {
   const [photoSpinAngleDeg, setPhotoSpinAngleDeg] = useState<number>(0);
   const transcribeVideoInputRef = useRef<HTMLInputElement | null>(null);
   const stitchPhotosInputRef = useRef<HTMLInputElement | null>(null);
+
+  // Streamlined Simple Business Mode & 1-Click Viral Express Creator State
+  const [isSimpleBusinessMode, setIsSimpleBusinessMode] = useState<boolean>(true);
+  const [showInlineRegForm, setShowInlineRegForm] = useState<boolean>(false);
+  const [viralFormulaId, setViralFormulaId] = useState<string>('reel-ventas');
+  const [viralExpressPhotos, setViralExpressPhotos] = useState<string[]>([]);
+  const [viralExpressVideoName, setViralExpressVideoName] = useState<string | null>(null);
+  const [viralExpressMediaBase64, setViralExpressMediaBase64] = useState<string | null>(null);
+  const [viralExpressMediaMime, setViralExpressMediaMime] = useState<string>('video/mp4');
+  const [isGeneratingViralExpress, setIsGeneratingViralExpress] = useState<boolean>(false);
+  const [copiedViralScript, setCopiedViralScript] = useState<boolean>(false);
+  const [viralExpressResult, setViralExpressResult] = useState<{
+    title: string;
+    viralHook: string;
+    viralCta: string;
+    hashtags: string;
+    transcript: string;
+    project: VideoProject;
+  } | null>(null);
+  const viralPhotoInputRef = useRef<HTMLInputElement | null>(null);
+  const viralVideoInputRef = useRef<HTMLInputElement | null>(null);
 
   // Free Business Registration State (Directed to https://whop.com/@saulmente)
   const [localRegistrations, setLocalRegistrations] = useState<FreeBusinessRegistration[]>(() =>
@@ -6907,6 +7223,666 @@ export default function App() {
     } finally {
       setIsQuickGenerating(false);
     }
+  };
+
+  // --- 1-CLICK VIRAL EXPRESS CREATOR & AI SCENE TRANSCRIBER (FROM IDEA, PHOTO OR PROMPT) ---
+  const VIRAL_EXPRESS_FORMULAS: Array<{
+    id: string;
+    badge: string;
+    label: string;
+    defaultIdea: string;
+    ratio: '9:16' | '16:9';
+    preset: SubjectPresetId;
+  }> = [
+    {
+      id: 'reel-ventas',
+      badge: '🔥',
+      label: 'Reel de Ventas Viral',
+      defaultIdea: 'Cómo multiplicar las ventas de tu negocio usando videos 3D virales e inteligencia artificial en segundos',
+      ratio: '9:16',
+      preset: 'coupe',
+    },
+    {
+      id: 'foto-a-video',
+      badge: '📸',
+      label: 'Foto → Video Transcrito',
+      defaultIdea: 'Analiza mi foto, transcribe su historia en escenas virales con subtítulos impactantes y gírala en 3D',
+      ratio: '9:16',
+      preset: 'sculpture',
+    },
+    {
+      id: 'lanzamiento-3d',
+      badge: '🚀',
+      label: 'Lanzamiento Producto 3D',
+      defaultIdea: 'Presentación cinematográfica de mi producto estrella en escenario 3D con luces neón y efectos de transición',
+      ratio: '16:9',
+      preset: 'station',
+    },
+    {
+      id: 'historia-exito',
+      badge: '💎',
+      label: 'Historia Antes y Después',
+      defaultIdea: 'De tardar horas editando videos a crear producciones virales transcritas con IA en un solo clic',
+      ratio: '9:16',
+      preset: 'drone',
+    },
+    {
+      id: 'top-secretos',
+      badge: '⚡',
+      label: 'Top 3 Secretos Negocio',
+      defaultIdea: 'Los 3 secretos de inteligencia artificial para atraer clientes y suscriptores todos los días',
+      ratio: '9:16',
+      preset: 'protein',
+    },
+    {
+      id: 'oferta-whop',
+      badge: '🎯',
+      label: 'Anuncio Suscripción Whop',
+      defaultIdea: 'Regístrate gratis hoy en mi negocio, recibe +62,500 tokens de bienvenida y entra a whop.com/@saulmente',
+      ratio: '9:16',
+      preset: 'coupe',
+    },
+  ];
+
+  const handleViralExpressPhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files: File[] = e.target.files ? Array.from(e.target.files) : [];
+    if (files.length === 0) return;
+    setIsCompressingImages(true);
+    setError(null);
+    try {
+      const compressed: string[] = [];
+      for (const file of files.slice(0, 8)) {
+        const dataUrl = await compressImageFile(file, 640, 0.8);
+        compressed.push(dataUrl);
+      }
+      if (compressed.length > 0) {
+        const nextPhotos = [...compressed, ...viralExpressPhotos].slice(0, 8);
+        setViralExpressPhotos(nextPhotos);
+        setUploadedImages((prev) => Array.from(new Set([...compressed, ...prev])).slice(0, 12));
+        setViralFormulaId('foto-a-video');
+        setSaveBannerMessage(
+          `¡${compressed.length} foto(s) lista(s)! Haz clic en "⚡ CREAR Y TRANSCRIBIR VIDEO VIRAL IA" para transcribirlas y animarlas.`
+        );
+        setTimeout(() => setSaveBannerMessage(null), 4000);
+      }
+    } catch (err: any) {
+      setError(err.message || 'No se pudo cargar la foto.');
+    } finally {
+      setIsCompressingImages(false);
+      e.target.value = '';
+    }
+  };
+
+  const handleViralExpressVideoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setIsCompressingImages(true);
+    setError(null);
+    try {
+      setViralExpressVideoName(file.name);
+      setViralExpressMediaMime(file.type || 'video/mp4');
+      if (file.type.startsWith('video/')) {
+        const extracted = await extractFramesFromVideoFile(file, 4);
+        setUploadedVideoObjectUrl(extracted.videoObjectUrl);
+        setUploadedVideoName(file.name);
+        if (extracted.frames.length > 0) {
+          setViralExpressPhotos(extracted.frames);
+          setUploadedImages((prev) => Array.from(new Set([...extracted.frames, ...prev])).slice(0, 12));
+        }
+      }
+      if (file.size < 8 * 1024 * 1024) {
+        const b64 = await new Promise<string>((res) => {
+          const reader = new FileReader();
+          reader.onload = () => res(String(reader.result || ''));
+          reader.onerror = () => res('');
+          reader.readAsDataURL(file);
+        });
+        setViralExpressMediaBase64(b64);
+      }
+      setSaveBannerMessage(
+        `Archivo "${file.name}" cargado. Haz clic en "⚡ CREAR Y TRANSCRIBIR VIDEO VIRAL IA" para transcribir sus escenas.`
+      );
+      setTimeout(() => setSaveBannerMessage(null), 4000);
+    } catch (err: any) {
+      setError(err.message || 'No se pudo procesar el archivo para transcripción viral.');
+    } finally {
+      setIsCompressingImages(false);
+      e.target.value = '';
+    }
+  };
+
+  const handleViralExpressCreate = async (overrideFormulaId?: string, overridePrompt?: string) => {
+    if (isGeneratingViralExpress) return;
+    setIsGeneratingViralExpress(true);
+    setError(null);
+
+    try {
+      const selectedFormula =
+        VIRAL_EXPRESS_FORMULAS.find((f) => f.id === (overrideFormulaId || viralFormulaId)) ||
+        VIRAL_EXPRESS_FORMULAS[0];
+
+      const effectiveIdea = (
+        overridePrompt ??
+        (quickPrompt.trim() || prompt.trim() || selectedFormula.defaultIdea)
+      ).trim();
+
+      const photosToUse =
+        viralExpressPhotos.length > 0 ? viralExpressPhotos : uploadedImages.slice(0, 6);
+
+      const res = await fetch('/api/ai/viral-express', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ideaPrompt: effectiveIdea,
+          photos: photosToUse,
+          mediaBase64: viralExpressMediaBase64 || undefined,
+          mediaMimeType: viralExpressMediaMime,
+          viralFormula: selectedFormula.id,
+          aspectRatio: selectedFormula.ratio,
+          sceneCount: 4,
+          targetPreset: selectedFormula.preset,
+        }),
+      });
+
+      const data = await res.json();
+      const presets: SubjectPresetId[] = ['coupe', 'station', 'drone', 'sculpture', 'protein'];
+      const validTransitions: SceneTransitionId[] = [
+        'zoom-cut',
+        'slide-up',
+        'neon-flash',
+        'wipe-right',
+        'dissolve',
+        'slide-left',
+        'wipe-radial',
+      ];
+
+      const builtScenes: Scene[] = Array.isArray(data.scenes) && data.scenes.length > 0
+        ? data.scenes.map((sc: any, idx: number) => {
+            const preset: SubjectPresetId = presets.includes(sc.scene3dPreset)
+              ? sc.scene3dPreset
+              : presets[idx % presets.length];
+            const trans: SceneTransitionId = validTransitions.includes(sc.transition)
+              ? sc.transition
+              : validTransitions[idx % validTransitions.length];
+            const imgUrl =
+              photosToUse[idx % Math.max(1, photosToUse.length)] ||
+              sc.imageUrl ||
+              createSampleSceneDataUrl(preset, `Escena Viral 0${idx + 1}`);
+            return {
+              description: sc.description || effectiveIdea,
+              overlayText: sc.overlayText || sc.description || `ESCENA VIRAL 0${idx + 1}`,
+              duration: sc.duration || '3.5s',
+              scene3dPreset: preset,
+              transition: trans,
+              transitionDurationSec: 0.8,
+              imageUrl: imgUrl,
+              images: photosToUse.length > 0 ? photosToUse : [imgUrl],
+            };
+          })
+        : [
+            {
+              description: effectiveIdea,
+              overlayText: `🔥 ${effectiveIdea.toUpperCase().slice(0, 60)}`,
+              duration: '4s',
+              scene3dPreset: selectedFormula.preset,
+              transition: 'zoom-cut',
+              transitionDurationSec: 0.8,
+              imageUrl:
+                photosToUse[0] ||
+                createSampleSceneDataUrl(selectedFormula.preset, effectiveIdea.slice(0, 32)),
+            },
+          ];
+
+      const allImgs = builtScenes.map((s) => s.imageUrl!).filter(Boolean);
+      const totalSec = getTotalScenesDurationSeconds(builtScenes, '14s');
+      const finalTitle = (data.title || `${selectedFormula.badge} ${effectiveIdea.slice(0, 42)}`).slice(0, 200);
+      const finalTranscript =
+        String(data.transcript || '') ||
+        builtScenes
+          .map((s, i) => `[Escena 0${i + 1} · ${s.duration}] ${s.overlayText} — ${s.description}`)
+          .join('\n');
+
+      const newViralProject: VideoProject = {
+        id: `viral-${Date.now()}`,
+        userId: user ? user.uid : 'local-studio',
+        title: finalTitle,
+        prompt: effectiveIdea.slice(0, 2000),
+        folder: selectedFolder !== 'all' ? selectedFolder : 'Videos Virales IA',
+        scene3dPreset: builtScenes[0]?.scene3dPreset || selectedFormula.preset,
+        images: allImgs,
+        referenceImage: allImgs[0],
+        script: finalTranscript,
+        customTextOverlay: String(data.viralHook || builtScenes[0]?.overlayText || ''),
+        scenes: builtScenes,
+        status: 'completed',
+        aspectRatio: selectedFormula.ratio,
+        duration: `${totalSec}s`,
+        ...(uploadedVideoObjectUrl ? { videoData: uploadedVideoObjectUrl, mimeType: viralExpressMediaMime } : {}),
+        createdAt: { seconds: Math.floor(Date.now() / 1000) },
+      };
+
+      await persistVideoProject(newViralProject);
+      setActiveStudioProject(newViralProject);
+      setDraftScenes(builtScenes);
+      setProjectTitle(newViralProject.title);
+      setPrompt(effectiveIdea);
+      setQuickPrompt(effectiveIdea);
+      setActiveTextOverlay(finalTranscript);
+
+      setViralExpressResult({
+        title: finalTitle,
+        viralHook: String(data.viralHook || `🔥 ¡Mira esto! ${effectiveIdea.slice(0, 65)}`),
+        viralCta: String(data.viralCta || '🚀 Regístrate gratis y entra a whop.com/@saulmente'),
+        hashtags: String(data.hashtags || '#Viral #Negocios #IA #Reels3D #Emprendimiento'),
+        transcript: finalTranscript,
+        project: newViralProject,
+      });
+
+      setSaveBannerMessage(
+        `¡Video Viral "${finalTitle}" creado y transcrito en ${builtScenes.length} escenas con IA!`
+      );
+      setTimeout(() => setSaveBannerMessage(null), 4500);
+    } catch (err: any) {
+      setError(err.message || 'No se pudo generar el video viral express.');
+    } finally {
+      setIsGeneratingViralExpress(false);
+    }
+  };
+
+  const renderViralExpressCreatorCard = () => {
+    const activeFormula =
+      VIRAL_EXPRESS_FORMULAS.find((f) => f.id === viralFormulaId) || VIRAL_EXPRESS_FORMULAS[0];
+    const previewProj = viralExpressResult?.project || activeStudioProject || videos[0] || null;
+
+    return (
+      <div className="mb-6 rounded-3xl bg-slate-900 border-2 border-cyan-400 p-5 sm:p-6 text-white shadow-xl space-y-5">
+        {/* Hidden inputs for 1-click photo & video upload inside the Viral Express Creator */}
+        <input
+          ref={viralPhotoInputRef}
+          type="file"
+          accept="image/*"
+          multiple
+          onChange={handleViralExpressPhotoUpload}
+          className="hidden"
+        />
+        <input
+          ref={viralVideoInputRef}
+          type="file"
+          accept="video/*,audio/*,.mp4,.webm,.mov,.mp3,.wav"
+          onChange={handleViralExpressVideoUpload}
+          className="hidden"
+        />
+
+        {/* Top Header */}
+        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 border-b border-slate-800 pb-4">
+          <div className="space-y-1">
+            <div className="inline-flex items-center gap-2 text-[11px] font-mono font-extrabold uppercase tracking-wider text-cyan-300">
+              <Sparkles className="w-4 h-4 text-fuchsia-400" />
+              <span>CREADOR Y TRANSCRIPTOR VIRAL EXPRESS EN 1 CLIC · IDEA, FOTO O PROMPT → VIDEO IA + 3D</span>
+            </div>
+            <h2 className="text-lg sm:text-xl font-extrabold text-white">
+              Crea Videos Virales y Transcribe Escenas con IA en Segundos
+            </h2>
+            <p className="text-xs text-slate-300 max-w-3xl">
+              <strong>3 pasos súper sencillos:</strong> 1) Escribe una idea/prompt o sube tu foto/video · 2) Haz clic en{' '}
+              <strong className="text-cyan-300">Crear y Transcribir Video Viral IA</strong> · 3) Descarga tu{' '}
+              <strong>.MP4</strong>, <strong>.MP3</strong>, copia los <strong>subtítulos transcritos</strong> o ábrelo en <strong>3D</strong>.
+            </p>
+          </div>
+
+          {/* Toggle between Simple Fast Mode and Full Studio Mode */}
+          <div className="flex flex-wrap items-center gap-2 shrink-0">
+            <button
+              type="button"
+              onClick={() => setIsSimpleBusinessMode((prev) => !prev)}
+              className={`px-3.5 py-2 rounded-xl text-xs font-extrabold flex items-center gap-1.5 border transition-all cursor-pointer ${
+                isSimpleBusinessMode
+                  ? 'bg-emerald-500 text-slate-950 border-emerald-400 shadow-sm'
+                  : 'bg-slate-800 text-slate-200 border-slate-700 hover:bg-slate-700'
+              }`}
+              title="Cambiar entre Modo Sencillo (más rápido y limpio) y Modo Estudio Completo"
+            >
+              <Zap className="w-3.5 h-3.5" />
+              <span>
+                {isSimpleBusinessMode
+                  ? 'Modo Sencillo Activo (Ver Controles Avanzados)'
+                  : 'Volver a Modo Sencillo Rápido'}
+              </span>
+            </button>
+          </div>
+        </div>
+
+        {/* Step 1: 1-Click Viral Formulas */}
+        <div className="space-y-2">
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-xs font-extrabold text-cyan-300 uppercase tracking-wider">
+              1. Elige una Fórmula Viral en 1 Clic (o escribe tu propia idea abajo):
+            </span>
+            <span className="text-[11px] font-mono text-slate-400">
+              Formato automático: {activeFormula.ratio} · Escenario 3D: {activeFormula.preset.toUpperCase()}
+            </span>
+          </div>
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
+            {VIRAL_EXPRESS_FORMULAS.map((f) => {
+              const isSelected = viralFormulaId === f.id;
+              return (
+                <button
+                  key={f.id}
+                  type="button"
+                  onClick={() => {
+                    setViralFormulaId(f.id);
+                    setQuickPrompt(f.defaultIdea);
+                    setPrompt(f.defaultIdea);
+                  }}
+                  className={`p-2.5 rounded-xl border text-left transition-all cursor-pointer flex flex-col justify-between ${
+                    isSelected
+                      ? 'bg-gradient-to-br from-fuchsia-600 to-cyan-600 border-cyan-300 text-white shadow-md scale-[1.01]'
+                      : 'bg-slate-950/90 border-slate-800 text-slate-300 hover:border-cyan-500/60 hover:text-white'
+                  }`}
+                >
+                  <div className="flex items-center justify-between">
+                    <span className="text-base">{f.badge}</span>
+                    <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-black/40 text-cyan-300">
+                      {f.ratio}
+                    </span>
+                  </div>
+                  <div className="text-xs font-extrabold mt-1.5 leading-snug">{f.label}</div>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Step 2: Unified Input (Idea / Prompt + Voice Dictation + Photo Upload + Video Upload) */}
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-3 items-stretch">
+          <div className="lg:col-span-7 relative flex flex-col justify-between bg-slate-950 border-2 border-slate-700 focus-within:border-cyan-400 rounded-2xl p-3">
+            <label className="text-[11px] font-mono font-bold text-fuchsia-400 uppercase mb-1 flex items-center justify-between">
+              <span>2. Tu Idea, Prompt o Guion a Transcribir:</span>
+              <button
+                type="button"
+                onClick={() => handleVoiceDictation('quick')}
+                className={`px-2.5 py-0.5 rounded-lg text-[11px] font-extrabold flex items-center gap-1 cursor-pointer ${
+                  isDictating
+                    ? 'bg-rose-600 text-white animate-pulse'
+                    : 'bg-slate-800 hover:bg-slate-700 text-cyan-300'
+                }`}
+              >
+                <Mic className="w-3 h-3" />
+                <span>{isDictating ? 'Escuchando tu voz...' : 'Dictar con Voz'}</span>
+              </button>
+            </label>
+            <textarea
+              rows={2}
+              value={quickPrompt}
+              onChange={(e) => {
+                setQuickPrompt(e.target.value);
+                setPrompt(e.target.value);
+              }}
+              placeholder={activeFormula.defaultIdea}
+              className="w-full bg-transparent text-sm text-white placeholder-slate-500 focus:outline-none resize-none"
+            />
+            {viralExpressPhotos.length > 0 && (
+              <div className="flex items-center gap-2 pt-2 mt-2 border-t border-slate-800 overflow-x-auto">
+                <span className="text-[11px] font-bold text-emerald-400 shrink-0">
+                  Fotos listas ({viralExpressPhotos.length}):
+                </span>
+                {viralExpressPhotos.map((img, i) => (
+                  <img
+                    key={i}
+                    src={img}
+                    alt=""
+                    className="w-10 h-10 rounded-lg object-cover border border-cyan-400 shrink-0"
+                  />
+                ))}
+                <button
+                  type="button"
+                  onClick={() => setViralExpressPhotos([])}
+                  className="text-[11px] text-rose-400 hover:underline ml-auto shrink-0 cursor-pointer"
+                >
+                  Limpiar fotos
+                </button>
+              </div>
+            )}
+            {viralExpressVideoName && (
+              <div className="pt-1.5 text-[11px] text-emerald-400 font-mono flex items-center justify-between">
+                <span>🎬 Archivo listo para transcribir: {viralExpressVideoName}</span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setViralExpressVideoName(null);
+                    setViralExpressMediaBase64(null);
+                  }}
+                  className="text-rose-400 hover:underline cursor-pointer"
+                >
+                  Quitar
+                </button>
+              </div>
+            )}
+          </div>
+
+          {/* Quick Media Attach + Giant 1-Click Viral Action Button */}
+          <div className="lg:col-span-5 flex flex-col justify-between gap-2.5">
+            <div className="grid grid-cols-3 gap-2">
+              <button
+                type="button"
+                onClick={() => viralPhotoInputRef.current?.click()}
+                className="py-2.5 px-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-xs font-extrabold text-cyan-300 flex items-center justify-center gap-1.5 cursor-pointer transition-colors"
+                title="Subir 1 o varias fotos para convertirlas en escenas transcritas con IA"
+              >
+                <ImageIcon className="w-4 h-4 text-fuchsia-400 shrink-0" />
+                <span className="truncate">+ Subir Foto</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => viralVideoInputRef.current?.click()}
+                className="py-2.5 px-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-xs font-extrabold text-amber-300 flex items-center justify-center gap-1.5 cursor-pointer transition-colors"
+                title="Subir un video o audio para transcribirlo en escenas virales"
+              >
+                <Film className="w-4 h-4 text-amber-400 shrink-0" />
+                <span className="truncate">+ Subir Video</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setIsCameraModalOpen(true)}
+                className="py-2.5 px-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-xs font-extrabold text-rose-300 flex items-center justify-center gap-1.5 cursor-pointer transition-colors"
+                title="Grabar directamente desde tu cámara"
+              >
+                <Camera className="w-4 h-4 text-rose-400 shrink-0" />
+                <span className="truncate">Cámara</span>
+              </button>
+            </div>
+
+            <button
+              type="button"
+              disabled={isGeneratingViralExpress}
+              onClick={() => handleViralExpressCreate()}
+              className="w-full py-4 px-5 rounded-2xl bg-gradient-to-r from-fuchsia-600 via-violet-600 to-cyan-500 hover:from-fuchsia-500 hover:to-cyan-400 disabled:opacity-50 text-white font-extrabold text-sm sm:text-base flex items-center justify-center gap-2.5 shadow-lg transition-all cursor-pointer"
+            >
+              {isGeneratingViralExpress ? (
+                <>
+                  <Loader2 className="w-5 h-5 animate-spin" />
+                  <span>Creando y Transcribiendo Escenas Virales IA...</span>
+                </>
+              ) : (
+                <>
+                  <Zap className="w-5 h-5 text-amber-300" />
+                  <span>⚡ CREAR Y TRANSCRIBIR VIDEO VIRAL IA (1 CLIC)</span>
+                </>
+              )}
+            </button>
+          </div>
+        </div>
+
+        {/* Step 3: Live Viral Result + Transcribed Scenes + Instant 1-Click Export Bar */}
+        {previewProj && (
+          <div className="pt-4 border-t border-slate-800 grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
+            {/* Live Video Monitor */}
+            <div className="lg:col-span-5 space-y-2.5">
+              <div className="flex items-center justify-between text-xs">
+                <span className="font-mono font-bold text-emerald-400 flex items-center gap-1.5">
+                  <span>● RESULTADO VIRAL EN VIVO:</span>
+                  <span className="text-white truncate max-w-[200px]">{previewProj.title}</span>
+                </span>
+                <span className="text-[11px] font-mono text-cyan-300">
+                  {previewProj.scenes?.length || 1} escenas · {previewProj.duration || '14s'}
+                </span>
+              </div>
+
+              <div
+                onClick={() => setPlayingVideo(previewProj)}
+                className="aspect-video rounded-2xl overflow-hidden bg-slate-950 border-2 border-cyan-500/60 relative cursor-pointer group"
+              >
+                <ProceduralVideoCanvas video={previewProj} isPlaying={true} />
+                <div className="absolute bottom-2.5 right-2.5 px-3 py-1 rounded-lg bg-black/80 text-white text-[11px] font-extrabold flex items-center gap-1.5 border border-white/20">
+                  <Play className="w-3.5 h-3.5 fill-white" />
+                  <span>Ampliar Reproductor</span>
+                </div>
+              </div>
+
+              {/* 4 Direct Export / Action Buttons */}
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                <button
+                  type="button"
+                  onClick={() => setPlayingVideo(previewProj)}
+                  className="py-2.5 px-3 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-extrabold flex items-center justify-center gap-1.5 cursor-pointer"
+                >
+                  <Play className="w-3.5 h-3.5" />
+                  <span>Ver Video</span>
+                </button>
+
+                <button
+                  type="button"
+                  disabled={isCreatingMp4}
+                  onClick={handleEasyCreateMp4}
+                  className="py-2.5 px-3 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-slate-950 text-xs font-extrabold flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
+                >
+                  <Film className="w-3.5 h-3.5" />
+                  <span>{isCreatingMp4 ? 'Exportando...' : 'Bajar .MP4'}</span>
+                </button>
+
+                <button
+                  type="button"
+                  disabled={isCreatingMp3}
+                  onClick={handleEasyCreateMp3}
+                  className="py-2.5 px-3 rounded-xl bg-fuchsia-600 hover:bg-fuchsia-500 text-white text-xs font-extrabold flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
+                >
+                  <Music className="w-3.5 h-3.5" />
+                  <span>{isCreatingMp3 ? 'Creando...' : 'Bajar .MP3'}</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => handleOpenIn3D(previewProj)}
+                  className="py-2.5 px-3 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 text-xs font-extrabold flex items-center justify-center gap-1.5 cursor-pointer"
+                >
+                  <Box className="w-3.5 h-3.5" />
+                  <span>Girar en 3D</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Transcribed Scenes & Viral Copy Box */}
+            <div className="lg:col-span-7 bg-slate-950 border border-slate-800 rounded-2xl p-4 space-y-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <span className="text-[11px] font-mono font-bold text-fuchsia-400 uppercase block">
+                    TRANSCRIPCIÓN IA DE ESCENAS + GANCHO VIRAL + SUBTÍTULOS
+                  </span>
+                  <h4 className="text-sm font-extrabold text-white">
+                    {viralExpressResult?.viralHook ||
+                      previewProj.customTextOverlay ||
+                      `🔥 ${previewProj.title}`}
+                  </h4>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const textToCopy = `${viralExpressResult?.title || previewProj.title}\n\n${
+                        viralExpressResult?.viralHook || ''
+                      }\n\n${
+                        viralExpressResult?.transcript ||
+                        activeTextOverlay ||
+                        previewProj.script ||
+                        ''
+                      }\n\n${viralExpressResult?.viralCta || ''}\n${
+                        viralExpressResult?.hashtags || '#Viral #IA #3D'
+                      }`;
+                      navigator.clipboard?.writeText(textToCopy);
+                      setCopiedViralScript(true);
+                      setTimeout(() => setCopiedViralScript(false), 3000);
+                    }}
+                    className="px-3 py-1.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 text-xs font-extrabold flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <Check className="w-3.5 h-3.5" />
+                    <span>{copiedViralScript ? '¡Copiado!' : 'Copiar Transcripción + Hashtags'}</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      handleEditVideoInStudio(previewProj);
+                      setActiveTab('create');
+                    }}
+                    className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-cyan-300 text-xs font-bold cursor-pointer"
+                  >
+                    Editar Escenas ({previewProj.scenes?.length || 1})
+                  </button>
+                </div>
+              </div>
+
+              {/* Scene-by-Scene Quick Interactive Pills */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-48 overflow-y-auto pr-1">
+                {(previewProj.scenes || []).map((sc, idx) => {
+                  const tMeta = getSceneTransitionPreset(sc.transition || 'dissolve');
+                  return (
+                    <div
+                      key={idx}
+                      className="p-2.5 rounded-xl bg-slate-900 border border-slate-800 flex items-start gap-2.5 text-xs"
+                    >
+                      {sc.imageUrl && (
+                        <img
+                          src={sc.imageUrl}
+                          alt=""
+                          className="w-12 h-12 rounded-lg object-cover border border-slate-700 shrink-0"
+                        />
+                      )}
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center justify-between gap-1">
+                          <span className="font-mono font-extrabold text-cyan-400 text-[10px]">
+                            ESCENA 0{idx + 1} · {sc.duration || '3.5s'}
+                          </span>
+                          <span className="font-mono text-[10px] text-fuchsia-400">
+                            {tMeta.badge} {tMeta.shortLabel}
+                          </span>
+                        </div>
+                        <div className="font-bold text-white truncate mt-0.5">
+                          {sc.overlayText || sc.description}
+                        </div>
+                        <div className="text-[11px] text-slate-400 line-clamp-1">
+                          {sc.description}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* Hashtags & CTA Strip */}
+              <div className="pt-2 border-t border-slate-800 flex flex-wrap items-center justify-between gap-2 text-[11px]">
+                <span className="font-mono text-cyan-300 truncate">
+                  {viralExpressResult?.hashtags || '#Viral #Negocios #InteligenciaArtificial #ReelsVirales #3D'}
+                </span>
+                <span className="text-emerald-400 font-semibold">
+                  {viralExpressResult?.viralCta || '🚀 Link oficial: whop.com/@saulmente'}
+                </span>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    );
   };
 
   // --- EASY TOOLBAR HANDLERS: CREAR, GUARDAR, BORRAR, CARGAR, CREAR MP3, CREAR MP4 ---
@@ -8571,102 +9547,104 @@ export default function App() {
                 </p>
               </div>
 
-              <div className="flex flex-wrap items-center gap-2.5 shrink-0">
+              <div className="flex flex-wrap items-center gap-2 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => setShowInlineRegForm((prev) => !prev)}
+                  className="px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-extrabold flex items-center gap-1.5 whitespace-nowrap shadow-sm cursor-pointer"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>{showInlineRegForm ? 'Ocultar Registro Rápido' : '+ Registro Gratis Rápido'}</span>
+                </button>
                 <button
                   type="button"
                   onClick={() => setIsSubscriptionModalOpen(true)}
-                  className="px-4 py-2.5 rounded-xl bg-black hover:bg-slate-900 text-white text-xs font-extrabold flex items-center gap-2 whitespace-nowrap shadow-md transition-all cursor-pointer"
+                  className="px-4 py-2 rounded-xl bg-black hover:bg-slate-900 text-white text-xs font-extrabold flex items-center gap-2 whitespace-nowrap shadow-md transition-all cursor-pointer"
                 >
-                  <span>⚡ Buy tokens · Preferencias Suscripción</span>
+                  <span>⚡ Buy tokens · Preferencias</span>
                 </button>
                 <a
                   href={WHOP_TARGET_URL}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="px-4 py-2.5 rounded-xl bg-white hover:bg-cyan-50 border-2 border-cyan-400 text-fuchsia-600 text-xs font-bold flex items-center gap-1.5 whitespace-nowrap transition-colors"
+                  className="px-3.5 py-2 rounded-xl bg-white hover:bg-cyan-50 border-2 border-cyan-400 text-fuchsia-600 text-xs font-bold flex items-center gap-1.5 whitespace-nowrap transition-colors"
                 >
-                  <span>Visitar https://whop.com/@saulmente</span>
+                  <span>whop.com/@saulmente</span>
                   <ExternalLink className="w-3.5 h-3.5 text-cyan-500" />
                 </a>
-                <button
-                  type="button"
-                  onClick={() => setIsRegistrationModalOpen(true)}
-                  className="px-4 py-2.5 rounded-xl bg-gradient-to-r from-fuchsia-600 via-violet-600 to-cyan-500 hover:from-fuchsia-500 hover:to-cyan-400 text-white text-xs font-extrabold flex items-center gap-1.5 whitespace-nowrap shadow-md transition-all"
-                >
-                  <Zap className="w-4 h-4" />
-                  <span>Ver Registros ({registrations.length}) / Formulario Completo</span>
-                </button>
               </div>
             </div>
 
-            {/* Inline Quick Registration Form -> Directs immediately to https://whop.com/@saulmente */}
-            <form
-              onSubmit={async (e) => {
-                e.preventDefault();
-                if (!inlineRegName.trim() || !inlineRegEmail.trim()) return;
-                await handleRegisterFreeBusiness({
-                  name: inlineRegName,
-                  email: inlineRegEmail,
-                  businessName: inlineRegBusiness || 'Mi Negocio',
-                  phone: inlineRegPhone,
-                  planType: 'Acceso Gratis Total · Negocio Whop (@saulmente)',
-                });
-                setInlineRegName('');
-                setInlineRegEmail('');
-                setInlineRegBusiness('');
-                setInlineRegPhone('');
-              }}
-              className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-2.5 pt-2 border-t border-cyan-300"
-            >
-              <input
-                type="text"
-                required
-                value={inlineRegName}
-                onChange={(e) => setInlineRegName(e.target.value)}
-                placeholder="Tu Nombre Completo *"
-                className="bg-white border-2 border-cyan-400 focus:border-fuchsia-500 rounded-xl px-3.5 py-2.5 text-xs text-violet-800 placeholder-fuchsia-400 outline-none"
-              />
-              <input
-                type="email"
-                required
-                value={inlineRegEmail}
-                onChange={(e) => setInlineRegEmail(e.target.value)}
-                placeholder="Tu Correo Electrónico *"
-                className="bg-white border-2 border-cyan-400 focus:border-fuchsia-500 rounded-xl px-3.5 py-2.5 text-xs text-violet-800 placeholder-fuchsia-400 outline-none"
-              />
-              <input
-                type="text"
-                value={inlineRegBusiness}
-                onChange={(e) => setInlineRegBusiness(e.target.value)}
-                placeholder="Nombre de tu Negocio / Proyecto"
-                className="bg-white border-2 border-cyan-400 focus:border-fuchsia-500 rounded-xl px-3.5 py-2.5 text-xs text-violet-800 placeholder-fuchsia-400 outline-none"
-              />
-              <input
-                type="tel"
-                value={inlineRegPhone}
-                onChange={(e) => setInlineRegPhone(e.target.value)}
-                placeholder="WhatsApp / Teléfono (Opcional)"
-                className="bg-white border-2 border-cyan-400 focus:border-fuchsia-500 rounded-xl px-3.5 py-2.5 text-xs text-violet-800 placeholder-fuchsia-400 outline-none"
-              />
-              <button
-                type="submit"
-                disabled={isSubmittingRegistration}
-                className="py-2.5 px-4 rounded-xl bg-gradient-to-r from-fuchsia-600 via-violet-600 to-cyan-500 hover:from-fuchsia-500 hover:to-cyan-400 disabled:opacity-50 text-white font-extrabold text-xs flex items-center justify-center gap-1.5 shadow-md transition-all whitespace-nowrap"
+            {/* Inline Quick Registration Form (Shown when toggled or in Complete Studio Mode) */}
+            {(showInlineRegForm || !isSimpleBusinessMode) && (
+              <form
+                onSubmit={async (e) => {
+                  e.preventDefault();
+                  if (!inlineRegName.trim() || !inlineRegEmail.trim()) return;
+                  await handleRegisterFreeBusiness({
+                    name: inlineRegName,
+                    email: inlineRegEmail,
+                    businessName: inlineRegBusiness || 'Mi Negocio',
+                    phone: inlineRegPhone,
+                    planType: 'Acceso Gratis Total · Negocio Whop (@saulmente)',
+                  });
+                  setInlineRegName('');
+                  setInlineRegEmail('');
+                  setInlineRegBusiness('');
+                  setInlineRegPhone('');
+                }}
+                className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-2.5 pt-2 border-t border-cyan-300"
               >
-                {isSubmittingRegistration ? (
-                  <>
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                    <span>Dirigiendo a Whop...</span>
-                  </>
-                ) : (
-                  <>
-                    <Zap className="w-4 h-4" />
-                    <span>Registrarme Gratis → Whop</span>
-                    <ExternalLink className="w-3.5 h-3.5" />
-                  </>
-                )}
-              </button>
-            </form>
+                <input
+                  type="text"
+                  required
+                  value={inlineRegName}
+                  onChange={(e) => setInlineRegName(e.target.value)}
+                  placeholder="Tu Nombre Completo *"
+                  className="bg-white border-2 border-cyan-400 focus:border-fuchsia-500 rounded-xl px-3.5 py-2.5 text-xs text-violet-800 placeholder-fuchsia-400 outline-none"
+                />
+                <input
+                  type="email"
+                  required
+                  value={inlineRegEmail}
+                  onChange={(e) => setInlineRegEmail(e.target.value)}
+                  placeholder="Tu Correo Electrónico *"
+                  className="bg-white border-2 border-cyan-400 focus:border-fuchsia-500 rounded-xl px-3.5 py-2.5 text-xs text-violet-800 placeholder-fuchsia-400 outline-none"
+                />
+                <input
+                  type="text"
+                  value={inlineRegBusiness}
+                  onChange={(e) => setInlineRegBusiness(e.target.value)}
+                  placeholder="Nombre de tu Negocio / Proyecto"
+                  className="bg-white border-2 border-cyan-400 focus:border-fuchsia-500 rounded-xl px-3.5 py-2.5 text-xs text-violet-800 placeholder-fuchsia-400 outline-none"
+                />
+                <input
+                  type="tel"
+                  value={inlineRegPhone}
+                  onChange={(e) => setInlineRegPhone(e.target.value)}
+                  placeholder="WhatsApp / Teléfono (Opcional)"
+                  className="bg-white border-2 border-cyan-400 focus:border-fuchsia-500 rounded-xl px-3.5 py-2.5 text-xs text-violet-800 placeholder-fuchsia-400 outline-none"
+                />
+                <button
+                  type="submit"
+                  disabled={isSubmittingRegistration}
+                  className="py-2.5 px-4 rounded-xl bg-gradient-to-r from-fuchsia-600 via-violet-600 to-cyan-500 hover:from-fuchsia-500 hover:to-cyan-400 disabled:opacity-50 text-white font-extrabold text-xs flex items-center justify-center gap-1.5 shadow-md transition-all whitespace-nowrap"
+                >
+                  {isSubmittingRegistration ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      <span>Dirigiendo a Whop...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Zap className="w-4 h-4" />
+                      <span>Registrarme Gratis → Whop</span>
+                      <ExternalLink className="w-3.5 h-3.5" />
+                    </>
+                  )}
+                </button>
+              </form>
+            )}
 
             {/* DIRECT FINDER BAR: Dónde buscar mis suscriptores gratis (Whop) y mis pagos PayPal */}
             <div className="p-3.5 rounded-xl bg-slate-900 text-white border border-slate-800 space-y-3">
@@ -8710,7 +9688,7 @@ export default function App() {
                 </div>
               </div>
 
-              {(registrations.length > 0 || subscriptions.length > 0) && (
+              {(registrations.length > 0 || subscriptions.length > 0) && !isSimpleBusinessMode && (
                 <div className="pt-2.5 border-t border-slate-800 grid grid-cols-1 md:grid-cols-2 gap-2.5 text-xs">
                   <div className="p-2.5 rounded-lg bg-slate-950 border border-slate-800 flex items-center justify-between gap-2">
                     <div className="min-w-0">
@@ -8798,6 +9776,9 @@ export default function App() {
             />
           ) : activeTab === 'dashboard' ? (
             <div>
+              {/* 1-CLICK VIRAL EXPRESS CREATOR & AI SCENE TRANSCRIBER (IDEA · PHOTO · PROMPT -> VIRAL VIDEO + 3D) */}
+              {renderViralExpressCreatorCard()}
+
               {/* Multi-Video Combiner Bar (Preview & Save Selected Videos into a Longer Multi-Scene Video!) */}
               {selectedVideosForMerge.length > 0 && (
                 <div className="mb-6 p-4 bg-indigo-950 border border-indigo-700 rounded-2xl text-white shadow-lg flex flex-col lg:flex-row lg:items-center justify-between gap-4">
@@ -9839,7 +10820,9 @@ export default function App() {
             </div>
           ) : (
             /* Multi-Scene Video & 3D Scenario Builder with Dedicated Preview & Save Buttons */
-            <div className="max-w-4xl mx-auto space-y-6">
+            <div className="max-w-5xl mx-auto space-y-6">
+              {renderViralExpressCreatorCard()}
+
               <div className="bg-white border border-slate-200 rounded-2xl p-6 space-y-4">
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                   <div>
@@ -10254,37 +11237,264 @@ export default function App() {
                   </div>
                 </div>
 
-                {/* Interactive Multi-Scene Editor List (Add, Edit, Choose 3D Scenario per Scene, Upload/Generate Image per Scene) */}
-                <div className="bg-white border border-slate-200 rounded-2xl p-6 space-y-4">
+                {/* Interactive Multi-Scene Editor List (Add, Edit, Choose 3D Scenario per Scene, Transition Effects & Live Preview) */}
+                <div className="bg-white border border-slate-200 rounded-2xl p-6 space-y-5">
                   <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 pb-4">
                     <div>
                       <h3 className="text-base font-bold text-slate-900">
-                        Línea de Tiempo de Múltiples Escenas ({draftScenes.length} Escenas · {draftTotalSeconds}s Total)
+                        Línea de Tiempo de Múltiples Escenas &amp; Efectos de Transición ({draftScenes.length} Escenas · {draftTotalSeconds}s Total)
                       </h3>
                       <p className="text-xs text-slate-500">
-                        Personaliza cada escena, elige su escenario 3D individual y ajusta su duración para crear videos tan largos como necesites.
+                        Personaliza cada escena, elige su escenario 3D individual, ajusta su duración y selecciona el efecto de transición (<strong>Dissolve, Slide, Wipe, Zoom, Flash</strong>) entre cada escena.
                       </p>
                     </div>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const presets: SubjectPresetId[] = ['coupe', 'station', 'drone', 'sculpture', 'protein'];
-                        const nextPreset = presets[draftScenes.length % presets.length];
-                        setDraftScenes((prev) => [
-                          ...prev,
-                          {
-                            description: `Nueva escena #${prev.length + 1}: Movimiento de cámara dinámico en escenario ${nextPreset.toUpperCase()}.`,
-                            duration: '5s',
-                            scene3dPreset: nextPreset,
-                            imageUrl: createSampleSceneDataUrl(nextPreset, `Escena 0${prev.length + 1} · ${nextPreset.toUpperCase()}`),
-                          },
-                        ]);
-                      }}
-                      className="px-3.5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold flex items-center gap-1.5"
-                    >
-                      <Plus className="w-4 h-4" />
-                      Agregar Nueva Escena
-                    </button>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setShowLiveTransitionPreview((prev) => !prev)}
+                        className={`px-3 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 border transition-colors cursor-pointer ${
+                          showLiveTransitionPreview
+                            ? 'bg-slate-900 text-white border-slate-900'
+                            : 'bg-slate-100 text-slate-700 border-slate-200 hover:bg-slate-200'
+                        }`}
+                      >
+                        <Eye className="w-3.5 h-3.5 text-cyan-400" />
+                        <span>{showLiveTransitionPreview ? 'Ocultar Monitor de Transiciones' : 'Ver Monitor de Transiciones'}</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const presets: SubjectPresetId[] = ['coupe', 'station', 'drone', 'sculpture', 'protein'];
+                          const nextPreset = presets[draftScenes.length % presets.length];
+                          setDraftScenes((prev) => [
+                            ...prev,
+                            {
+                              description: `Nueva escena #${prev.length + 1}: Movimiento de cámara dinámico en escenario ${nextPreset.toUpperCase()}.`,
+                              duration: '5s',
+                              scene3dPreset: nextPreset,
+                              transition: globalTransitionPreset,
+                              transitionDurationSec: globalTransitionDurationSec,
+                              imageUrl: createSampleSceneDataUrl(nextPreset, `Escena 0${prev.length + 1} · ${nextPreset.toUpperCase()}`),
+                            },
+                          ]);
+                        }}
+                        className="px-3.5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold flex items-center gap-1.5 cursor-pointer"
+                      >
+                        <Plus className="w-4 h-4" />
+                        Agregar Nueva Escena
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* GLOBAL SCENE TRANSITION SELECTOR & LIVE PREVIEW MONITOR */}
+                  <div className="p-4 rounded-2xl bg-slate-900 text-white border border-slate-800 space-y-4">
+                    <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
+                      <div className="space-y-0.5">
+                        <div className="text-xs font-mono font-bold text-cyan-400 uppercase tracking-wider flex items-center gap-1.5">
+                          <Layers className="w-3.5 h-3.5 text-fuchsia-400" />
+                          <span>PANEL DE TRANSICIONES ENTRE ESCENAS (DISSOLVE · SLIDE · WIPE · ZOOM · FLASH)</span>
+                        </div>
+                        <p className="text-xs text-slate-300">
+                          Selecciona una transición para aplicarla a todas las escenas en 1 clic, o personaliza la transición individual debajo de cada escena.
+                        </p>
+                      </div>
+
+                      <div className="flex flex-wrap items-center gap-2 shrink-0">
+                        <div className="flex items-center gap-2 bg-slate-950 border border-slate-800 rounded-xl px-3 py-1.5">
+                          <span className="text-[11px] font-semibold text-slate-300 whitespace-nowrap">
+                            Velocidad Transición:
+                          </span>
+                          <input
+                            type="range"
+                            min={0.3}
+                            max={1.8}
+                            step={0.1}
+                            value={globalTransitionDurationSec}
+                            onChange={(e) => {
+                              const val = parseFloat(e.target.value) || 0.8;
+                              setGlobalTransitionDurationSec(val);
+                            }}
+                            className="w-20 h-1.5 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-cyan-400"
+                          />
+                          <span className="text-xs font-mono font-bold text-cyan-400 tabular-nums">
+                            {globalTransitionDurationSec.toFixed(1)}s
+                          </span>
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setDraftScenes((prev) =>
+                              prev.map((sc) => ({
+                                ...sc,
+                                transition: globalTransitionPreset,
+                                transitionDurationSec: globalTransitionDurationSec,
+                              }))
+                            );
+                            const presetInfo = getSceneTransitionPreset(globalTransitionPreset);
+                            setSaveBannerMessage(
+                              `Transición "${presetInfo.label}" (${globalTransitionDurationSec.toFixed(1)}s) aplicada a las ${draftScenes.length} escenas.`
+                            );
+                            setTimeout(() => setSaveBannerMessage(null), 3500);
+                          }}
+                          className="px-3.5 py-2 rounded-xl bg-fuchsia-600 hover:bg-fuchsia-500 text-white text-xs font-extrabold flex items-center gap-1.5 cursor-pointer shadow-xs"
+                        >
+                          <Check className="w-3.5 h-3.5" />
+                          <span>Aplicar a Todas ({draftScenes.length})</span>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const dynamicCycle: SceneTransitionId[] = [
+                              'dissolve',
+                              'slide-left',
+                              'wipe-right',
+                              'zoom-cut',
+                              'wipe-radial',
+                              'slide-up',
+                              'neon-flash',
+                            ];
+                            setDraftScenes((prev) =>
+                              prev.map((sc, idx) => ({
+                                ...sc,
+                                transition: dynamicCycle[idx % dynamicCycle.length],
+                                transitionDurationSec: globalTransitionDurationSec,
+                              }))
+                            );
+                            setSaveBannerMessage(
+                              '¡Mezcla dinámica de transiciones (Dissolve, Slide, Wipe, Zoom, Iris) aplicada entre todas las escenas!'
+                            );
+                            setTimeout(() => setSaveBannerMessage(null), 3500);
+                          }}
+                          className="px-3.5 py-2 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-slate-950 text-xs font-extrabold flex items-center gap-1.5 cursor-pointer shadow-xs"
+                        >
+                          <Sparkles className="w-3.5 h-3.5" />
+                          <span>Variar Automáticamente</span>
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Selectable Transition Preset Pills */}
+                    <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-2">
+                      {SCENE_TRANSITION_PRESETS.map((tp) => {
+                        const isSelected = globalTransitionPreset === tp.id;
+                        return (
+                          <button
+                            key={tp.id}
+                            type="button"
+                            onClick={() => {
+                              setGlobalTransitionPreset(tp.id);
+                              setDraftScenes((prev) =>
+                                prev.map((sc) => ({
+                                  ...sc,
+                                  transition: tp.id,
+                                  transitionDurationSec: globalTransitionDurationSec,
+                                }))
+                              );
+                            }}
+                            title={tp.description}
+                            className={`p-2.5 rounded-xl border text-left transition-all cursor-pointer flex flex-col justify-between ${
+                              isSelected
+                                ? 'bg-gradient-to-br from-fuchsia-600/90 to-cyan-600/90 border-cyan-300 text-white shadow-sm'
+                                : 'bg-slate-950/90 border-slate-800 text-slate-300 hover:border-slate-600 hover:text-white'
+                            }`}
+                          >
+                            <div className="flex items-center justify-between gap-1">
+                              <span className="text-sm font-mono font-extrabold text-cyan-300">
+                                {tp.badge}
+                              </span>
+                              {isSelected && <Check className="w-3.5 h-3.5 text-white shrink-0" />}
+                            </div>
+                            <div className="text-[11px] font-extrabold mt-1 truncate">
+                              {tp.shortLabel}
+                            </div>
+                          </button>
+                        );
+                      })}
+                    </div>
+
+                    {/* Live Multi-Scene Transition Preview Monitor */}
+                    {showLiveTransitionPreview && (
+                      <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 pt-2 border-t border-slate-800 items-center">
+                        <div className="lg:col-span-7 bg-slate-950 rounded-xl overflow-hidden border border-slate-800 relative aspect-video">
+                          <ProceduralVideoCanvas
+                            video={{
+                              id: 'draft-live-transition-preview',
+                              title: projectTitle.trim() || 'Vista Previa de Transiciones Multi-Escena',
+                              prompt: prompt.trim() || 'Secuencia Multi-Escena con Transiciones',
+                              scenes: draftScenes,
+                              images: draftScenes
+                                .map((s) => s.imageUrl)
+                                .filter((u): u is string => Boolean(u)),
+                              status: 'completed',
+                              aspectRatio,
+                              duration: `${draftTotalSeconds}s`,
+                              createdAt: { seconds: Math.floor(Date.now() / 1000) },
+                              userId: 'local-studio',
+                            }}
+                            isPlaying={isStudioPreviewPlaying}
+                            onProgress={(_, idx) => setStudioPreviewSceneIdx(idx)}
+                          />
+                        </div>
+
+                        <div className="lg:col-span-5 space-y-3 text-xs">
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="font-mono font-bold text-emerald-400">
+                              ● MONITOR EN VIVO: ESCENA 0{studioPreviewSceneIdx + 1} → ESCENA 0{((studioPreviewSceneIdx + 1) % draftScenes.length) + 1}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => setIsStudioPreviewPlaying((prev) => !prev)}
+                              className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-white font-bold flex items-center gap-1.5 cursor-pointer"
+                            >
+                              {isStudioPreviewPlaying ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}
+                              <span>{isStudioPreviewPlaying ? 'Pausar' : 'Reproducir'}</span>
+                            </button>
+                          </div>
+
+                          <div className="p-3 rounded-xl bg-slate-950 border border-slate-800 space-y-2">
+                            <div className="text-[11px] text-slate-400">
+                              Transición activa en Escena 0{studioPreviewSceneIdx + 1}:
+                            </div>
+                            <div className="text-sm font-bold text-white flex items-center gap-2">
+                              <span className="px-2 py-0.5 rounded bg-fuchsia-600 text-white font-mono text-xs">
+                                {getSceneTransitionPreset(draftScenes[studioPreviewSceneIdx]?.transition || 'dissolve').badge}
+                              </span>
+                              <span>
+                                {getSceneTransitionPreset(draftScenes[studioPreviewSceneIdx]?.transition || 'dissolve').label}
+                              </span>
+                            </div>
+                            <p className="text-[11px] text-slate-400 leading-relaxed">
+                              {getSceneTransitionPreset(draftScenes[studioPreviewSceneIdx]?.transition || 'dissolve').description}
+                            </p>
+                          </div>
+
+                          {/* Scene-to-Scene Transition Map Strip */}
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            {draftScenes.map((s, idx) => {
+                              const tMeta = getSceneTransitionPreset(s.transition || 'dissolve');
+                              const isCurrent = studioPreviewSceneIdx === idx;
+                              return (
+                                <div
+                                  key={idx}
+                                  className={`px-2.5 py-1 rounded-lg border text-[11px] font-mono flex items-center gap-1.5 ${
+                                    isCurrent
+                                      ? 'bg-cyan-500/20 border-cyan-400 text-cyan-200 font-bold'
+                                      : 'bg-slate-950 border-slate-800 text-slate-400'
+                                  }`}
+                                >
+                                  <span>E0{idx + 1}</span>
+                                  <span className="text-fuchsia-400">{tMeta.badge} {tMeta.shortLabel}</span>
+                                  <span>→</span>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      </div>
+                    )}
                   </div>
 
                   <div className="space-y-4">
@@ -10300,334 +11510,431 @@ export default function App() {
                       const isDictatingInst =
                         dictatingSceneState?.sceneIdx === idx && dictatingSceneState?.field === 'instruction';
                       const isRewritingThisScene = rewritingSceneIdx === idx;
+                      const currentTransitionMeta = getSceneTransitionPreset(sc.transition || 'dissolve');
+                      const nextSceneNumber = ((idx + 1) % draftScenes.length) + 1;
 
                       return (
-                        <div
-                          key={idx}
-                          className="p-4 rounded-xl bg-slate-50 border border-slate-200 flex flex-col md:flex-row gap-4 items-start"
-                        >
-                          {/* Scene Thumbnail, Multi-Photo Strip & Image Controls */}
-                          <div className="w-full md:w-52 shrink-0 space-y-2.5">
-                            <div className="aspect-video rounded-lg overflow-hidden bg-slate-900 border border-slate-300 relative">
-                              {sc.imageUrl ? (
-                                <img src={sc.imageUrl} alt={`Escena ${idx + 1}`} className="w-full h-full object-cover" />
-                              ) : (
-                                <div className="w-full h-full flex items-center justify-center text-xs text-slate-500">
-                                  Sin foto
-                                </div>
-                              )}
-                              <span className="absolute top-1.5 left-1.5 px-2 py-0.5 rounded bg-slate-950/85 text-white font-mono text-[10px] font-bold">
-                                ESCENA 0{idx + 1}
-                              </span>
-                              {scenePhotos.length > 0 && (
-                                <span className="absolute bottom-1.5 right-1.5 px-1.5 py-0.5 rounded bg-indigo-950/85 text-indigo-200 font-mono text-[10px]">
-                                  {scenePhotos.length} {scenePhotos.length === 1 ? 'foto' : 'fotos'}
+                        <React.Fragment key={idx}>
+                          <div
+                            className="p-4 rounded-xl bg-slate-50 border border-slate-200 flex flex-col md:flex-row gap-4 items-start"
+                          >
+                            {/* Scene Thumbnail, Multi-Photo Strip & Image Controls */}
+                            <div className="w-full md:w-52 shrink-0 space-y-2.5">
+                              <div className="aspect-video rounded-lg overflow-hidden bg-slate-900 border border-slate-300 relative">
+                                {sc.imageUrl ? (
+                                  <img src={sc.imageUrl} alt={`Escena ${idx + 1}`} className="w-full h-full object-cover" />
+                                ) : (
+                                  <div className="w-full h-full flex items-center justify-center text-xs text-slate-500">
+                                    Sin foto
+                                  </div>
+                                )}
+                                <span className="absolute top-1.5 left-1.5 px-2 py-0.5 rounded bg-slate-950/85 text-white font-mono text-[10px] font-bold">
+                                  ESCENA 0{idx + 1}
                                 </span>
-                              )}
-                            </div>
+                                <span className="absolute top-1.5 right-1.5 px-1.5 py-0.5 rounded bg-fuchsia-600/90 text-white font-mono text-[10px] font-bold">
+                                  {currentTransitionMeta.badge} {currentTransitionMeta.shortLabel}
+                                </span>
+                                {scenePhotos.length > 0 && (
+                                  <span className="absolute bottom-1.5 right-1.5 px-1.5 py-0.5 rounded bg-indigo-950/85 text-indigo-200 font-mono text-[10px]">
+                                    {scenePhotos.length} {scenePhotos.length === 1 ? 'foto' : 'fotos'}
+                                  </span>
+                                )}
+                              </div>
 
-                            {/* Mini Photo Strip for this Scene (Select active photo or remove) */}
-                            {scenePhotos.length > 0 && (
-                              <div className="flex items-center gap-1.5 overflow-x-auto pb-1">
-                                {scenePhotos.map((photoUrl, pIdx) => {
-                                  const isSelectedPhoto = sc.imageUrl === photoUrl;
-                                  return (
-                                    <div key={pIdx} className="relative shrink-0 group">
-                                      <button
-                                        type="button"
-                                        onClick={() =>
-                                          setDraftScenes((prev) =>
-                                            prev.map((item, i) => (i === idx ? { ...item, imageUrl: photoUrl } : item))
-                                          )
-                                        }
-                                        className={`w-11 h-8 rounded overflow-hidden border-2 transition-all block ${
-                                          isSelectedPhoto
-                                            ? 'border-indigo-600 ring-1 ring-indigo-500'
-                                            : 'border-slate-300 opacity-75 hover:opacity-100'
-                                        }`}
-                                        title={`Usar foto #${pIdx + 1} en la Escena 0${idx + 1}`}
-                                      >
-                                        <img src={photoUrl} alt={`Foto ${pIdx + 1}`} className="w-full h-full object-cover" />
-                                      </button>
-                                      {scenePhotos.length > 1 && (
+                              {/* Mini Photo Strip for this Scene (Select active photo or remove) */}
+                              {scenePhotos.length > 0 && (
+                                <div className="flex items-center gap-1.5 overflow-x-auto pb-1">
+                                  {scenePhotos.map((photoUrl, pIdx) => {
+                                    const isSelectedPhoto = sc.imageUrl === photoUrl;
+                                    return (
+                                      <div key={pIdx} className="relative shrink-0 group">
                                         <button
                                           type="button"
                                           onClick={() =>
                                             setDraftScenes((prev) =>
-                                              prev.map((item, i) => {
-                                                if (i !== idx) return item;
-                                                const remaining = scenePhotos.filter((_, rIdx) => rIdx !== pIdx);
-                                                return {
-                                                  ...item,
-                                                  images: remaining,
-                                                  imageUrl:
-                                                    item.imageUrl === photoUrl ? remaining[0] : item.imageUrl,
-                                                };
-                                              })
+                                              prev.map((item, i) => (i === idx ? { ...item, imageUrl: photoUrl } : item))
                                             )
                                           }
-                                          className="absolute -top-1 -right-1 w-3.5 h-3.5 rounded-full bg-rose-600 text-white flex items-center justify-center text-[9px] opacity-0 group-hover:opacity-100 transition-opacity"
-                                          title="Quitar esta foto de la escena"
+                                          className={`w-11 h-8 rounded overflow-hidden border-2 transition-all block ${
+                                            isSelectedPhoto
+                                              ? 'border-indigo-600 ring-1 ring-indigo-500'
+                                              : 'border-slate-300 opacity-75 hover:opacity-100'
+                                          }`}
+                                          title={`Usar foto #${pIdx + 1} en la Escena 0${idx + 1}`}
                                         >
-                                          ×
+                                          <img src={photoUrl} alt={`Foto ${pIdx + 1}`} className="w-full h-full object-cover" />
                                         </button>
-                                      )}
-                                    </div>
-                                  );
-                                })}
-                              </div>
-                            )}
-
-                            <div className="grid grid-cols-2 gap-1.5">
-                              <label className="cursor-pointer py-1.5 px-2 rounded-lg bg-amber-500 hover:bg-amber-600 text-white text-[11px] font-bold text-center flex items-center justify-center gap-1 shadow-2xs transition-colors">
-                                <Upload className="w-3 h-3 shrink-0" />
-                                <span>+ Fotos</span>
-                                <input
-                                  type="file"
-                                  accept="image/*"
-                                  multiple
-                                  onChange={(e) => handleSceneRowImageUpload(idx, e)}
-                                  className="hidden"
-                                />
-                              </label>
-                              <button
-                                type="button"
-                                disabled={isRewritingThisScene}
-                                onClick={() => handleGenerateSingleSceneAiImage(idx)}
-                                className="py-1.5 px-2 rounded-lg bg-indigo-50 border border-indigo-200 hover:bg-indigo-100 text-[11px] font-bold text-indigo-700 flex items-center justify-center gap-1 disabled:opacity-50"
-                                title="Regenerar imagen de la escena con IA"
-                              >
-                                {isRewritingThisScene ? (
-                                  <Loader2 className="w-3 h-3 animate-spin" />
-                                ) : (
-                                  <Sparkles className="w-3 h-3" />
-                                )}
-                                <span>IA Foto</span>
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => handleRotateSingleScenePhoto(idx)}
-                                className="py-1.5 px-2 rounded-lg bg-white border border-fuchsia-300 hover:bg-fuchsia-50 text-[11px] font-bold text-fuchsia-600 flex items-center justify-center gap-1"
-                                title="Girar foto de esta escena 90°"
-                              >
-                                <RotateCw className="w-3 h-3 shrink-0" />
-                                <span>Girar 90°</span>
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => handleStitchSingleScenePhotos(idx)}
-                                className="py-1.5 px-2 rounded-lg bg-white border border-cyan-400 hover:bg-cyan-50 text-[11px] font-bold text-cyan-700 flex items-center justify-center gap-1"
-                                title="Juntar las fotos de esta escena en un collage 3D"
-                              >
-                                <Layers className="w-3 h-3 shrink-0" />
-                                <span>Juntar</span>
-                              </button>
-                            </div>
-                          </div>
-
-                          {/* Scene Description, Voice/Text Rewrite, Duration Slider, and AI Regeneration Controls */}
-                          <div className="flex-1 w-full space-y-3">
-                            <div className="flex flex-wrap items-center justify-between gap-2">
-                              <div className="flex items-center gap-2">
-                                <span className="text-xs font-bold text-slate-800">Escenario 3D:</span>
-                                <select
-                                  value={sc.scene3dPreset || 'coupe'}
-                                  onChange={(e) => {
-                                    const val = e.target.value as SubjectPresetId;
-                                    setDraftScenes((prev) =>
-                                      prev.map((item, i) => (i === idx ? { ...item, scene3dPreset: val } : item))
+                                        {scenePhotos.length > 1 && (
+                                          <button
+                                            type="button"
+                                            onClick={() =>
+                                              setDraftScenes((prev) =>
+                                                prev.map((item, i) => {
+                                                  if (i !== idx) return item;
+                                                  const remaining = scenePhotos.filter((_, rIdx) => rIdx !== pIdx);
+                                                  return {
+                                                    ...item,
+                                                    images: remaining,
+                                                    imageUrl:
+                                                      item.imageUrl === photoUrl ? remaining[0] : item.imageUrl,
+                                                  };
+                                                })
+                                              )
+                                            }
+                                            className="absolute -top-1 -right-1 w-3.5 h-3.5 rounded-full bg-rose-600 text-white flex items-center justify-center text-[9px] opacity-0 group-hover:opacity-100 transition-opacity"
+                                            title="Quitar esta foto de la escena"
+                                          >
+                                            ×
+                                          </button>
+                                        )}
+                                      </div>
                                     );
-                                  }}
-                                  className="bg-white border border-slate-200 rounded-lg px-2.5 py-1 text-xs font-medium text-slate-800 focus:outline-none focus:border-indigo-500"
-                                >
-                                  {STAGE_3D_PRESETS.map((sp) => (
-                                    <option key={sp.id} value={sp.id}>
-                                      {sp.name} ({sp.badge})
-                                    </option>
-                                  ))}
-                                </select>
-                              </div>
-
-                              <div className="flex flex-wrap items-center gap-2.5 bg-white border border-slate-200 rounded-xl px-3 py-1.5 shadow-2xs">
-                                <div className="flex items-center gap-1.5">
-                                  <Clock className="w-3.5 h-3.5 text-indigo-500 shrink-0" />
-                                  <label
-                                    htmlFor={`scene-duration-slider-${idx}`}
-                                    className="text-xs font-medium text-slate-600 whitespace-nowrap"
-                                  >
-                                    Duración:
-                                  </label>
+                                  })}
                                 </div>
+                              )}
 
-                                <div className="flex items-center gap-2">
-                                  <span className="text-[10px] font-mono text-slate-400 tabular-nums">1s</span>
+                              <div className="grid grid-cols-2 gap-1.5">
+                                <label className="cursor-pointer py-1.5 px-2 rounded-lg bg-amber-500 hover:bg-amber-600 text-white text-[11px] font-bold text-center flex items-center justify-center gap-1 shadow-2xs transition-colors">
+                                  <Upload className="w-3 h-3 shrink-0" />
+                                  <span>+ Fotos</span>
                                   <input
-                                    id={`scene-duration-slider-${idx}`}
-                                    type="range"
-                                    min={1}
-                                    max={20}
-                                    step={0.5}
-                                    value={parseDurationSeconds(sc.duration, 4)}
+                                    type="file"
+                                    accept="image/*"
+                                    multiple
+                                    onChange={(e) => handleSceneRowImageUpload(idx, e)}
+                                    className="hidden"
+                                  />
+                                </label>
+                                <button
+                                  type="button"
+                                  disabled={isRewritingThisScene}
+                                  onClick={() => handleGenerateSingleSceneAiImage(idx)}
+                                  className="py-1.5 px-2 rounded-lg bg-indigo-50 border border-indigo-200 hover:bg-indigo-100 text-[11px] font-bold text-indigo-700 flex items-center justify-center gap-1 disabled:opacity-50"
+                                  title="Regenerar imagen de la escena con IA"
+                                >
+                                  {isRewritingThisScene ? (
+                                    <Loader2 className="w-3 h-3 animate-spin" />
+                                  ) : (
+                                    <Sparkles className="w-3 h-3" />
+                                  )}
+                                  <span>IA Foto</span>
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleRotateSingleScenePhoto(idx)}
+                                  className="py-1.5 px-2 rounded-lg bg-white border border-fuchsia-300 hover:bg-fuchsia-50 text-[11px] font-bold text-fuchsia-600 flex items-center justify-center gap-1"
+                                  title="Girar foto de esta escena 90°"
+                                >
+                                  <RotateCw className="w-3 h-3 shrink-0" />
+                                  <span>Girar 90°</span>
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleStitchSingleScenePhotos(idx)}
+                                  className="py-1.5 px-2 rounded-lg bg-white border border-cyan-400 hover:bg-cyan-50 text-[11px] font-bold text-cyan-700 flex items-center justify-center gap-1"
+                                  title="Juntar las fotos de esta escena en un collage 3D"
+                                >
+                                  <Layers className="w-3 h-3 shrink-0" />
+                                  <span>Juntar</span>
+                                </button>
+                              </div>
+                            </div>
+
+                            {/* Scene Description, Voice/Text Rewrite, Duration Slider, Transition Effect Selector, and AI Regeneration Controls */}
+                            <div className="flex-1 w-full space-y-3">
+                              <div className="flex flex-wrap items-center justify-between gap-2">
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <span className="text-xs font-bold text-slate-800">Escenario 3D:</span>
+                                  <select
+                                    value={sc.scene3dPreset || 'coupe'}
                                     onChange={(e) => {
-                                      const numericVal = parseFloat(e.target.value);
-                                      const formatted = `${Number.isFinite(numericVal) ? numericVal : 4}s`;
+                                      const val = e.target.value as SubjectPresetId;
                                       setDraftScenes((prev) =>
-                                        prev.map((item, i) => (i === idx ? { ...item, duration: formatted } : item))
+                                        prev.map((item, i) => (i === idx ? { ...item, scene3dPreset: val } : item))
                                       );
                                     }}
-                                    aria-label={`Duración de la escena ${idx + 1}`}
-                                    className="w-28 sm:w-36 h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-indigo-600 focus:outline-none"
-                                  />
-                                  <span className="text-[10px] font-mono text-slate-400 tabular-nums">20s</span>
+                                    className="bg-white border border-slate-200 rounded-lg px-2.5 py-1 text-xs font-medium text-slate-800 focus:outline-none focus:border-indigo-500"
+                                  >
+                                    {STAGE_3D_PRESETS.map((sp) => (
+                                      <option key={sp.id} value={sp.id}>
+                                        {sp.name} ({sp.badge})
+                                      </option>
+                                    ))}
+                                  </select>
+
+                                  {/* Per-Scene Transition Selector */}
+                                  <span className="text-xs font-bold text-fuchsia-700 ml-1">Transición:</span>
+                                  <select
+                                    value={sc.transition || 'dissolve'}
+                                    onChange={(e) => {
+                                      const nextTrans = e.target.value as SceneTransitionId;
+                                      setDraftScenes((prev) =>
+                                        prev.map((item, i) =>
+                                          i === idx
+                                            ? {
+                                                ...item,
+                                                transition: nextTrans,
+                                                transitionDurationSec: item.transitionDurationSec || globalTransitionDurationSec,
+                                              }
+                                            : item
+                                        )
+                                      );
+                                    }}
+                                    className="bg-fuchsia-50 border border-fuchsia-300 rounded-lg px-2.5 py-1 text-xs font-bold text-fuchsia-900 focus:outline-none focus:border-fuchsia-600"
+                                    title={`Efecto de transición entre Escena 0${idx + 1} y Escena 0${nextSceneNumber}`}
+                                  >
+                                    {SCENE_TRANSITION_PRESETS.map((tp) => (
+                                      <option key={tp.id} value={tp.id}>
+                                        {tp.badge} {tp.label}
+                                      </option>
+                                    ))}
+                                  </select>
                                 </div>
 
-                                <span className="px-2 py-0.5 rounded-md bg-indigo-50 border border-indigo-200 text-xs font-mono font-bold text-indigo-700 tabular-nums min-w-[3.25rem] text-center">
-                                  {parseDurationSeconds(sc.duration, 4)}s
-                                </span>
+                                <div className="flex flex-wrap items-center gap-2.5 bg-white border border-slate-200 rounded-xl px-3 py-1.5 shadow-2xs">
+                                  <div className="flex items-center gap-1.5">
+                                    <Clock className="w-3.5 h-3.5 text-indigo-500 shrink-0" />
+                                    <label
+                                      htmlFor={`scene-duration-slider-${idx}`}
+                                      className="text-xs font-medium text-slate-600 whitespace-nowrap"
+                                    >
+                                      Duración:
+                                    </label>
+                                  </div>
 
-                                {draftScenes.length > 1 && (
-                                  <button
-                                    type="button"
-                                    onClick={() =>
-                                      setDraftScenes((prev) => prev.filter((_, itemIdx) => itemIdx !== idx))
-                                    }
-                                    className="p-1 text-slate-400 hover:text-rose-600 rounded-lg hover:bg-rose-50 transition-colors"
-                                    title="Eliminar escena"
-                                  >
-                                    <Trash2 className="w-4 h-4" />
-                                  </button>
-                                )}
+                                  <div className="flex items-center gap-2">
+                                    <span className="text-[10px] font-mono text-slate-400 tabular-nums">1s</span>
+                                    <input
+                                      id={`scene-duration-slider-${idx}`}
+                                      type="range"
+                                      min={1}
+                                      max={20}
+                                      step={0.5}
+                                      value={parseDurationSeconds(sc.duration, 4)}
+                                      onChange={(e) => {
+                                        const numericVal = parseFloat(e.target.value);
+                                        const formatted = `${Number.isFinite(numericVal) ? numericVal : 4}s`;
+                                        setDraftScenes((prev) =>
+                                          prev.map((item, i) => (i === idx ? { ...item, duration: formatted } : item))
+                                        );
+                                      }}
+                                      aria-label={`Duración de la escena ${idx + 1}`}
+                                      className="w-24 sm:w-32 h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-indigo-600 focus:outline-none"
+                                    />
+                                    <span className="text-[10px] font-mono text-slate-400 tabular-nums">20s</span>
+                                  </div>
+
+                                  <span className="px-2 py-0.5 rounded-md bg-indigo-50 border border-indigo-200 text-xs font-mono font-bold text-indigo-700 tabular-nums min-w-[3.25rem] text-center">
+                                    {parseDurationSeconds(sc.duration, 4)}s
+                                  </span>
+
+                                  {draftScenes.length > 1 && (
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        setDraftScenes((prev) => prev.filter((_, itemIdx) => itemIdx !== idx))
+                                      }
+                                      className="p-1 text-slate-400 hover:text-rose-600 rounded-lg hover:bg-rose-50 transition-colors"
+                                      title="Eliminar escena"
+                                    >
+                                      <Trash2 className="w-4 h-4" />
+                                    </button>
+                                  )}
+                                </div>
                               </div>
-                            </div>
 
-                            {/* Scene Text / Script Box + Voice Dictation & Quick Rewrite from Photo */}
-                            <div className="space-y-1.5">
-                              <div className="flex flex-wrap items-center justify-between gap-2">
-                                <span className="text-[11px] font-semibold text-slate-600">
-                                  Guion y Texto en Pantalla de la Escena (Editable por Texto o Voz):
-                                </span>
-                                <div className="flex flex-wrap items-center gap-1.5">
+                              {/* Scene Text / Script Box + Voice Dictation & Quick Rewrite from Photo */}
+                              <div className="space-y-1.5">
+                                <div className="flex flex-wrap items-center justify-between gap-2">
+                                  <span className="text-[11px] font-semibold text-slate-600">
+                                    Guion y Texto en Pantalla de la Escena (Editable por Texto o Voz):
+                                  </span>
+                                  <div className="flex flex-wrap items-center gap-1.5">
+                                    <button
+                                      type="button"
+                                      onClick={() => handleSceneVoiceDictation(idx, 'description')}
+                                      className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold flex items-center gap-1 transition-colors ${
+                                        isDictatingDesc
+                                          ? 'bg-rose-600 text-white'
+                                          : 'bg-white border border-slate-200 hover:bg-slate-100 text-slate-700'
+                                      }`}
+                                      title="Dictar con tu voz el texto de esta escena"
+                                    >
+                                      <Mic className="w-3 h-3 text-indigo-600" />
+                                      <span>{isDictatingDesc ? 'Escuchando Voz...' : 'Dictar por Voz'}</span>
+                                    </button>
+                                    <button
+                                      type="button"
+                                      disabled={isRewritingThisScene}
+                                      onClick={() =>
+                                        handleRewriteOrRegenerateSceneWithAI(idx, {
+                                          regenerateVisual: false,
+                                          customInstruction:
+                                            sc.aiInstruction ||
+                                            'Analiza la foto de la escena y reescribe el guion y subtítulo con estilo cinematográfico profesional',
+                                        })
+                                      }
+                                      className="px-2.5 py-1 rounded-lg bg-indigo-50 border border-indigo-200 hover:bg-indigo-100 text-[11px] font-semibold text-indigo-700 flex items-center gap-1 disabled:opacity-50"
+                                      title="Analizar la foto adjunta y reescribir el texto de la escena con IA"
+                                    >
+                                      {isRewritingThisScene ? (
+                                        <Loader2 className="w-3 h-3 animate-spin" />
+                                      ) : (
+                                        <Sparkles className="w-3 h-3" />
+                                      )}
+                                      <span>Reescribir desde Foto</span>
+                                    </button>
+                                  </div>
+                                </div>
+
+                                <textarea
+                                  value={sc.description}
+                                  onChange={(e) => {
+                                    const val = e.target.value;
+                                    setDraftScenes((prev) =>
+                                      prev.map((item, i) =>
+                                        i === idx ? { ...item, description: val, overlayText: val } : item
+                                      )
+                                    );
+                                  }}
+                                  rows={2}
+                                  placeholder="Escribe o dicta por voz la descripción visual y texto en pantalla para esta escena..."
+                                  className="w-full bg-white border border-slate-200 rounded-lg p-2.5 text-xs text-slate-800 focus:ring-2 focus:ring-indigo-500 outline-none resize-none"
+                                />
+                              </div>
+
+                              {/* AI Rewrite / Regenerate Bar (Using Photo + Text or Voice Instruction) */}
+                              <div className="p-2.5 rounded-xl bg-indigo-50/70 border border-indigo-200/80 flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+                                <div className="relative flex-1">
+                                  <input
+                                    type="text"
+                                    value={sc.aiInstruction || ''}
+                                    onChange={(e) => {
+                                      const val = e.target.value;
+                                      setDraftScenes((prev) =>
+                                        prev.map((item, i) => (i === idx ? { ...item, aiInstruction: val } : item))
+                                      );
+                                    }}
+                                    placeholder="Instrucción por texto o voz para la IA (ej. Usa la foto para crear una toma nocturna en neón)..."
+                                    className="w-full bg-white border border-indigo-200 rounded-lg py-1.5 pl-3 pr-16 text-xs text-slate-800 placeholder-slate-400 focus:outline-none focus:border-indigo-500"
+                                  />
                                   <button
                                     type="button"
-                                    onClick={() => handleSceneVoiceDictation(idx, 'description')}
-                                    className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold flex items-center gap-1 transition-colors ${
-                                      isDictatingDesc
+                                    onClick={() => handleSceneVoiceDictation(idx, 'instruction')}
+                                    className={`absolute right-1.5 top-1/2 -translate-y-1/2 px-2 py-0.5 rounded text-[10px] font-bold flex items-center gap-1 transition-colors ${
+                                      isDictatingInst
                                         ? 'bg-rose-600 text-white'
-                                        : 'bg-white border border-slate-200 hover:bg-slate-100 text-slate-700'
+                                        : 'bg-slate-100 hover:bg-slate-200 text-slate-700'
                                     }`}
-                                    title="Dictar con tu voz el texto de esta escena"
+                                    title="Dictar instrucción para la IA con tu voz"
                                   >
                                     <Mic className="w-3 h-3 text-indigo-600" />
-                                    <span>{isDictatingDesc ? 'Escuchando Voz...' : 'Dictar por Voz'}</span>
+                                    <span>{isDictatingInst ? 'Voz...' : 'Voz'}</span>
                                   </button>
+                                </div>
+
+                                <div className="flex items-center gap-1.5 shrink-0">
                                   <button
                                     type="button"
                                     disabled={isRewritingThisScene}
                                     onClick={() =>
-                                      handleRewriteOrRegenerateSceneWithAI(idx, {
-                                        regenerateVisual: false,
-                                        customInstruction:
-                                          sc.aiInstruction ||
-                                          'Analiza la foto de la escena y reescribe el guion y subtítulo con estilo cinematográfico profesional',
-                                      })
+                                      handleRewriteOrRegenerateSceneWithAI(idx, { regenerateVisual: false })
                                     }
-                                    className="px-2.5 py-1 rounded-lg bg-indigo-50 border border-indigo-200 hover:bg-indigo-100 text-[11px] font-semibold text-indigo-700 flex items-center gap-1 disabled:opacity-50"
-                                    title="Analizar la foto adjunta y reescribir el texto de la escena con IA"
+                                    className="px-3 py-1.5 rounded-lg bg-white border border-indigo-300 hover:bg-indigo-100 text-indigo-700 text-xs font-bold flex items-center gap-1 whitespace-nowrap disabled:opacity-50"
+                                    title="Reescribir el texto de la escena con ayuda de la IA usando la foto y tu instrucción"
                                   >
                                     {isRewritingThisScene ? (
-                                      <Loader2 className="w-3 h-3 animate-spin" />
+                                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
                                     ) : (
-                                      <Sparkles className="w-3 h-3" />
+                                      <TypeIcon className="w-3.5 h-3.5" />
                                     )}
-                                    <span>Reescribir desde Foto</span>
+                                    <span>Reescribir IA</span>
+                                  </button>
+
+                                  <button
+                                    type="button"
+                                    disabled={isRewritingThisScene}
+                                    onClick={() =>
+                                      handleRewriteOrRegenerateSceneWithAI(idx, { regenerateVisual: true })
+                                    }
+                                    className="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold flex items-center gap-1 whitespace-nowrap shadow-2xs disabled:opacity-50"
+                                    title="Regenerar tanto el guion como la imagen de la escena con ayuda de la IA"
+                                  >
+                                    {isRewritingThisScene ? (
+                                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                    ) : (
+                                      <Sparkles className="w-3.5 h-3.5" />
+                                    )}
+                                    <span>Regenerar con IA</span>
                                   </button>
                                 </div>
                               </div>
-
-                              <textarea
-                                value={sc.description}
-                                onChange={(e) => {
-                                  const val = e.target.value;
-                                  setDraftScenes((prev) =>
-                                    prev.map((item, i) =>
-                                      i === idx ? { ...item, description: val, overlayText: val } : item
-                                    )
-                                  );
-                                }}
-                                rows={2}
-                                placeholder="Escribe o dicta por voz la descripción visual y texto en pantalla para esta escena..."
-                                className="w-full bg-white border border-slate-200 rounded-lg p-2.5 text-xs text-slate-800 focus:ring-2 focus:ring-indigo-500 outline-none resize-none"
-                              />
-                            </div>
-
-                            {/* AI Rewrite / Regenerate Bar (Using Photo + Text or Voice Instruction) */}
-                            <div className="p-2.5 rounded-xl bg-indigo-50/70 border border-indigo-200/80 flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
-                              <div className="relative flex-1">
-                                <input
-                                  type="text"
-                                  value={sc.aiInstruction || ''}
-                                  onChange={(e) => {
-                                    const val = e.target.value;
-                                    setDraftScenes((prev) =>
-                                      prev.map((item, i) => (i === idx ? { ...item, aiInstruction: val } : item))
-                                    );
-                                  }}
-                                  placeholder="Instrucción por texto o voz para la IA (ej. Usa la foto para crear una toma nocturna en neón)..."
-                                  className="w-full bg-white border border-indigo-200 rounded-lg py-1.5 pl-3 pr-16 text-xs text-slate-800 placeholder-slate-400 focus:outline-none focus:border-indigo-500"
-                                />
-                                <button
-                                  type="button"
-                                  onClick={() => handleSceneVoiceDictation(idx, 'instruction')}
-                                  className={`absolute right-1.5 top-1/2 -translate-y-1/2 px-2 py-0.5 rounded text-[10px] font-bold flex items-center gap-1 transition-colors ${
-                                    isDictatingInst
-                                      ? 'bg-rose-600 text-white'
-                                      : 'bg-slate-100 hover:bg-slate-200 text-slate-700'
-                                  }`}
-                                  title="Dictar instrucción para la IA con tu voz"
-                                >
-                                  <Mic className="w-3 h-3 text-indigo-600" />
-                                  <span>{isDictatingInst ? 'Voz...' : 'Voz'}</span>
-                                </button>
-                              </div>
-
-                              <div className="flex items-center gap-1.5 shrink-0">
-                                <button
-                                  type="button"
-                                  disabled={isRewritingThisScene}
-                                  onClick={() =>
-                                    handleRewriteOrRegenerateSceneWithAI(idx, { regenerateVisual: false })
-                                  }
-                                  className="px-3 py-1.5 rounded-lg bg-white border border-indigo-300 hover:bg-indigo-100 text-indigo-700 text-xs font-bold flex items-center gap-1 whitespace-nowrap disabled:opacity-50"
-                                  title="Reescribir el texto de la escena con ayuda de la IA usando la foto y tu instrucción"
-                                >
-                                  {isRewritingThisScene ? (
-                                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                                  ) : (
-                                    <TypeIcon className="w-3.5 h-3.5" />
-                                  )}
-                                  <span>Reescribir IA</span>
-                                </button>
-
-                                <button
-                                  type="button"
-                                  disabled={isRewritingThisScene}
-                                  onClick={() =>
-                                    handleRewriteOrRegenerateSceneWithAI(idx, { regenerateVisual: true })
-                                  }
-                                  className="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold flex items-center gap-1 whitespace-nowrap shadow-2xs disabled:opacity-50"
-                                  title="Regenerar tanto el guion como la imagen de la escena con ayuda de la IA"
-                                >
-                                  {isRewritingThisScene ? (
-                                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                                  ) : (
-                                    <Sparkles className="w-3.5 h-3.5" />
-                                  )}
-                                  <span>Regenerar con IA</span>
-                                </button>
-                              </div>
                             </div>
                           </div>
-                        </div>
+
+                          {/* VISUAL INTER-SCENE TRANSITION CONNECTOR BAR BETWEEN SCENE idx AND SCENE idx+1 */}
+                          {idx < draftScenes.length - 1 && (
+                            <div className="my-1 px-4 py-2 rounded-xl bg-gradient-to-r from-fuchsia-50 via-white to-cyan-50 border border-cyan-300 flex flex-wrap items-center justify-between gap-2 text-xs">
+                              <div className="flex items-center gap-2">
+                                <span className="px-2 py-0.5 rounded bg-slate-900 text-cyan-300 font-mono text-[10px] font-bold">
+                                  TRANSICIÓN ESCENA 0{idx + 1} → ESCENA 0{idx + 2}
+                                </span>
+                                <span className="text-slate-600 text-[11px] hidden sm:inline">
+                                  {currentTransitionMeta.description}
+                                </span>
+                              </div>
+
+                              <div className="flex flex-wrap items-center gap-1.5">
+                                {SCENE_TRANSITION_PRESETS.map((tp) => {
+                                  const isActiveTrans = (sc.transition || 'dissolve') === tp.id;
+                                  return (
+                                    <button
+                                      key={tp.id}
+                                      type="button"
+                                      onClick={() =>
+                                        setDraftScenes((prev) =>
+                                          prev.map((item, i) =>
+                                            i === idx ? { ...item, transition: tp.id } : item
+                                          )
+                                        )
+                                      }
+                                      className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition-all cursor-pointer ${
+                                        isActiveTrans
+                                          ? 'bg-fuchsia-600 text-white shadow-2xs'
+                                          : 'bg-white border border-slate-200 text-slate-700 hover:border-fuchsia-400'
+                                      }`}
+                                      title={tp.label}
+                                    >
+                                      {tp.badge} {tp.shortLabel}
+                                    </button>
+                                  );
+                                })}
+
+                                <div className="flex items-center gap-1.5 ml-1 pl-2 border-l border-slate-200">
+                                  <span className="text-[10px] font-mono text-slate-500">Dur:</span>
+                                  <select
+                                    value={String(sc.transitionDurationSec || 0.8)}
+                                    onChange={(e) => {
+                                      const sec = parseFloat(e.target.value) || 0.8;
+                                      setDraftScenes((prev) =>
+                                        prev.map((item, i) =>
+                                          i === idx ? { ...item, transitionDurationSec: sec } : item
+                                        )
+                                      );
+                                    }}
+                                    className="bg-white border border-slate-200 rounded px-1.5 py-0.5 text-[11px] font-mono font-bold text-slate-800 outline-none"
+                                  >
+                                    <option value="0.4">0.4s</option>
+                                    <option value="0.6">0.6s</option>
+                                    <option value="0.8">0.8s</option>
+                                    <option value="1.2">1.2s</option>
+                                    <option value="1.5">1.5s</option>
+                                  </select>
+                                </div>
+                              </div>
+                            </div>
+                          )}
+                        </React.Fragment>
                       );
                     })}
                   </div>

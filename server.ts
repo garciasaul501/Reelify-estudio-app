@@ -766,6 +766,239 @@ Devuelve JSON con: "title", "transcript", y "scenes" (cada escena con "descripti
     });
   });
 
+  // 3e. 1-Click Viral Express Creator & Scene Transcriber from Idea, Photo, or Prompt (gemini-3.8-flash + multimodal)
+  app.post('/api/ai/viral-express', async (req, res) => {
+    const {
+      ideaPrompt = '',
+      photos = [],
+      mediaBase64,
+      mediaMimeType = 'video/mp4',
+      viralFormula = 'reel-ventas',
+      aspectRatio = '9:16',
+      sceneCount = 4,
+      targetPreset = 'coupe',
+    } = req.body || {};
+
+    const ai = getAiClient();
+    const targetCount = Math.min(8, Math.max(3, Number(sceneCount) || 4));
+    const photoList: string[] = Array.isArray(photos)
+      ? photos.filter((p) => typeof p === 'string' && p.length > 0).slice(0, 8)
+      : [];
+    const cleanIdea = String(ideaPrompt || '').trim() || 'Cómo hacer crecer tu negocio con videos virales e inteligencia artificial 3D';
+
+    const transitionsCycle = ['zoom-cut', 'slide-up', 'neon-flash', 'wipe-right', 'dissolve', 'slide-left', 'wipe-radial'];
+
+    let viralTitle = `${cleanIdea.slice(0, 48)} · Viral IA`;
+    let viralHook = `🔥 ¡PARA TODO! Mira cómo transformar "${cleanIdea.slice(0, 38)}" en segundos:`;
+    let viralCta = '🚀 Sígueme y entra al link en mi perfil (whop.com/@saulmente) para empezar gratis hoy.';
+    let viralHashtags = '#Viral #Negocios #InteligenciaArtificial #ReelsVirales #Creador3D #Emprendimiento';
+    let fullTranscript = '';
+    let generatedScenes: Array<{
+      description: string;
+      overlayText: string;
+      duration: string;
+      scene3dPreset: SubjectPreset;
+      transition: string;
+      imageUrl?: string;
+    }> = [];
+
+    // Optional step 1: If audio/video media is provided, transcribe spoken voice first
+    let detectedVoiceTranscript = '';
+    if (ai && mediaBase64 && typeof mediaBase64 === 'string') {
+      try {
+        const cleanMedia = mediaBase64.includes(',') ? mediaBase64.split(',')[1] : mediaBase64;
+        if (cleanMedia.length > 0 && cleanMedia.length < 16_000_000) {
+          const transRes = await ai.models.generateContent({
+            model: 'gemini-3.5-transcribe',
+            contents: {
+              parts: [
+                {
+                  inlineData: {
+                    data: cleanMedia,
+                    mimeType: mediaMimeType || 'video/mp4',
+                  },
+                },
+                {
+                  text: 'Transcribe en español todo lo que se dice o ocurre en este archivo para convertirlo en escenas virales.',
+                },
+              ],
+            },
+          });
+          if (transRes.text?.trim()) {
+            detectedVoiceTranscript = transRes.text.trim();
+          }
+        }
+      } catch {
+        // Fallback to multimodal prompt/photo analysis
+      }
+    }
+
+    // Step 2: Multimodal Viral Script, Hook, Scene Transcription & Storyboard via gemini-3.8-flash
+    if (ai) {
+      try {
+        const parts: any[] = [];
+        for (const pUrl of photoList.slice(0, 4)) {
+          const raster = extractRasterBase64(pUrl);
+          if (raster) {
+            parts.push({
+              inlineData: {
+                data: raster.data,
+                mimeType: raster.mimeType,
+              },
+            });
+          }
+        }
+
+        const formulaPrompt = `Eres un Director Experto en Videos Virales (TikTok, Instagram Reels, YouTube Shorts) y Transcripción de Escenas con IA.
+A partir de esta entrada del usuario:
+- Idea / Prompt: "${cleanIdea}"
+- Fórmula Viral seleccionada: "${viralFormula}"
+- Formato: "${aspectRatio}"
+${photoList.length > 0 ? `- El usuario subió ${photoList.length} foto(s): analiza visualmente lo que aparece en las fotos y transcríbelo dentro de las escenas.` : ''}
+${detectedVoiceTranscript ? `- Audio transcrito detectado: "${detectedVoiceTranscript}"` : ''}
+
+Crea una producción viral completa y ultra persuasiva en español con exactamente ${targetCount} escenas.
+Devuelve un JSON con:
+1. "title": Título magnético y viral (máx 55 caracteres).
+2. "viralHook": Gancho explosivo para los primeros 3 segundos que detenga el scroll (máx 110 caracteres).
+3. "viralCta": Llamada a la acción final clara y persuasiva (máx 110 caracteres).
+4. "hashtags": 6 hashtags virales separados por espacio.
+5. "transcript": Transcripción completa escena por escena con marcas de tiempo (ej. "[00:00-00:03] ESCENA 1: ...").
+6. "scenes": Lista de ${targetCount} escenas. Cada escena debe tener:
+   - "description": Dirección visual cinematográfica y de cámara en español.
+   - "overlayText": Subtítulo viral impactante en mayúsculas para mostrar en pantalla (máx 85 caracteres).
+   - "duration": Duración como "3s" o "4s".
+   - "scene3dPreset": El mejor escenario 3D entre "coupe", "station", "drone", "sculpture", "protein".`;
+
+        parts.push({ text: formulaPrompt });
+
+        const response = await ai.models.generateContent({
+          model: 'gemini-3.8-flash',
+          contents: { parts },
+          config: {
+            responseMimeType: 'application/json',
+            responseSchema: {
+              type: Type.OBJECT,
+              properties: {
+                title: { type: Type.STRING },
+                viralHook: { type: Type.STRING },
+                viralCta: { type: Type.STRING },
+                hashtags: { type: Type.STRING },
+                transcript: { type: Type.STRING },
+                scenes: {
+                  type: Type.ARRAY,
+                  items: {
+                    type: Type.OBJECT,
+                    properties: {
+                      description: { type: Type.STRING },
+                      overlayText: { type: Type.STRING },
+                      duration: { type: Type.STRING },
+                      scene3dPreset: { type: Type.STRING },
+                    },
+                    required: ['description', 'overlayText', 'duration', 'scene3dPreset'],
+                  },
+                },
+              },
+              required: ['title', 'viralHook', 'viralCta', 'hashtags', 'transcript', 'scenes'],
+            },
+          },
+        });
+
+        const raw = response.text?.trim() || '';
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          if (parsed.title) viralTitle = String(parsed.title).trim();
+          if (parsed.viralHook) viralHook = String(parsed.viralHook).trim();
+          if (parsed.viralCta) viralCta = String(parsed.viralCta).trim();
+          if (parsed.hashtags) viralHashtags = String(parsed.hashtags).trim();
+          if (parsed.transcript) fullTranscript = String(parsed.transcript).trim();
+          if (Array.isArray(parsed.scenes) && parsed.scenes.length > 0) {
+            generatedScenes = parsed.scenes.map((sc: any, idx: number) => {
+              const preset: SubjectPreset = PRESET_CYCLE.includes(sc.scene3dPreset)
+                ? sc.scene3dPreset
+                : PRESET_CYCLE[idx % PRESET_CYCLE.length];
+              return {
+                description: String(sc.description || cleanIdea),
+                overlayText: String(sc.overlayText || sc.description || `ESCENA 0${idx + 1}`).toUpperCase(),
+                duration: String(sc.duration || '3.5s'),
+                scene3dPreset: preset,
+                transition: transitionsCycle[idx % transitionsCycle.length],
+                imageUrl: photoList[idx % Math.max(1, photoList.length)],
+              };
+            });
+          }
+        }
+      } catch (err: any) {
+        console.warn('Viral express fallback triggered:', err?.message);
+      }
+    }
+
+    if (generatedScenes.length === 0) {
+      const startPresetIdx = Math.max(0, PRESET_CYCLE.indexOf(targetPreset as SubjectPreset));
+      const stepTemplates = [
+        {
+          overlay: `🔥 GANCHO VIRAL: ${cleanIdea.toUpperCase().slice(0, 52)}`,
+          desc: `Escena 01 (Hook Viral 0-3s): Impacto visual inmediato presentando "${cleanIdea}" con zoom dinámico e iluminación neón de alto contraste.`,
+        },
+        {
+          overlay: `⚡ EL SECRETO QUE NADIE TE CUENTA SOBRE ${cleanIdea.toUpperCase().slice(0, 36)}`,
+          desc: `Escena 02 (Desarrollo y Valor): Cámara orbital 360° mostrando los detalles clave en escenario 3D interactivo.`,
+        },
+        {
+          overlay: `💎 RESULTADO EN TIEMPO REAL · CALIDAD DE ESTUDIO 3D`,
+          desc: `Escena 03 (Demostración / Transformación): Transición rápida revelando el resultado profesional con efectos visuales y subtítulos dinámicos.`,
+        },
+        {
+          overlay: `🚀 EMPIEZA GRATIS HOY · LINK EN PERFIL (WHOP @SAULMENTE)`,
+          desc: `Escena 04 (Llamada a la Acción Viral): Toma heroica de cierre invitando a registrarse y compartir el video.`,
+        },
+      ];
+
+      generatedScenes = Array.from({ length: targetCount }, (_, idx) => {
+        const preset = PRESET_CYCLE[(startPresetIdx + idx) % PRESET_CYCLE.length];
+        const tpl = stepTemplates[idx % stepTemplates.length];
+        return {
+          description: tpl.desc,
+          overlayText: tpl.overlay,
+          duration: '3.5s',
+          scene3dPreset: preset,
+          transition: transitionsCycle[idx % transitionsCycle.length],
+          imageUrl:
+            photoList[idx % Math.max(1, photoList.length)] ||
+            buildFallbackConceptSvgDataUrl(`${cleanIdea} · Escena ${idx + 1}`, idx),
+        };
+      });
+    } else {
+      for (let i = 0; i < generatedScenes.length; i++) {
+        if (!generatedScenes[i].imageUrl) {
+          generatedScenes[i].imageUrl = buildFallbackConceptSvgDataUrl(
+            generatedScenes[i].description || cleanIdea,
+            i
+          );
+        }
+      }
+    }
+
+    if (!fullTranscript) {
+      fullTranscript = generatedScenes
+        .map(
+          (sc, i) =>
+            `[00:0${i * 3} - 00:0${(i + 1) * 3}] ESCENA 0${i + 1} (${sc.scene3dPreset.toUpperCase()} · ${sc.transition.toUpperCase()}):\n🎙️ Subtítulo Viral: "${sc.overlayText}"\n🎬 Acción Visual: ${sc.description}`
+        )
+        .join('\n\n');
+    }
+
+    return res.json({
+      success: true,
+      title: viralTitle,
+      viralHook,
+      viralCta,
+      hashtags: viralHashtags,
+      transcript: fullTranscript,
+      scenes: generatedScenes,
+    });
+  });
+
   // 3d. Stitch / Combine Multiple Photos & Rotate in 3D with AI Endpoint
   app.post('/api/ai/stitch-rotate-photos-3d', async (req, res) => {
     const {
